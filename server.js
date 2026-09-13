@@ -25,6 +25,8 @@ if (missing.length) {
 }
 
 const app = express();
+app.set("trust proxy", 1);
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
