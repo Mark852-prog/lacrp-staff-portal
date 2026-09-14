@@ -12,24 +12,47 @@ async function exchangeCode(code) {
 
   const res = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
     body: params,
   });
 
   if (!res.ok) {
-    throw new Error(`Discord token exchange failed: ${res.status} ${await res.text()}`);
+    const body = await res.text();
+
+    console.error("Discord OAuth response:", {
+      status: res.status,
+      body,
+      retryAfter: res.headers.get("retry-after"),
+      remaining: res.headers.get("x-ratelimit-remaining"),
+      limit: res.headers.get("x-ratelimit-limit"),
+      reset: res.headers.get("x-ratelimit-reset"),
+      global: res.headers.get("x-ratelimit-global"),
+    });
+
+    throw new Error(
+      `Discord token exchange failed: ${res.status} ${body}`
+    );
   }
-  return res.json(); // { access_token, token_type, expires_in, ... }
+
+  return res.json();
 }
 
 async function getUser(accessToken) {
   const res = await fetch("https://discord.com/api/users/@me", {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
   });
+
   if (!res.ok) {
-    throw new Error(`Failed to fetch Discord user: ${res.status} ${await res.text()}`);
+    throw new Error(
+      `Failed to fetch Discord user: ${res.status} ${await res.text()}`
+    );
   }
-  return res.json(); // { id, username, global_name, avatar, discriminator, ... }
+
+  return res.json();
 }
 
 // Requires the bot to be a member of the guild. A single-member lookup
@@ -38,15 +61,29 @@ async function getUser(accessToken) {
 async function getMemberRoles(discordUserId) {
   const res = await fetch(
     `https://discord.com/api/guilds/${process.env.DISCORD_GUILD_ID}/members/${discordUserId}`,
-    { headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` } }
+    {
+      headers: {
+        Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+      },
+    }
   );
 
-  if (res.status === 404) return []; // logged in with Discord but not in your server
-  if (!res.ok) {
-    throw new Error(`Failed to fetch member roles: ${res.status} ${await res.text()}`);
+  if (res.status === 404) {
+    return []; // logged in with Discord but not in your server
   }
+
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch member roles: ${res.status} ${await res.text()}`
+    );
+  }
+
   const member = await res.json();
   return member.roles || [];
 }
 
-module.exports = { exchangeCode, getUser, getMemberRoles };
+module.exports = {
+  exchangeCode,
+  getUser,
+  getMemberRoles,
+};
