@@ -1,5 +1,5 @@
 // Thin wrapper around the bits of Discord's API this app needs.
-// Uses the global `fetch` built into Node 18+.
+// Uses the global fetch built into Node 18+.
 
 async function exchangeCode(code) {
   const params = new URLSearchParams({
@@ -21,15 +21,22 @@ async function exchangeCode(code) {
   if (!res.ok) {
     const body = await res.text();
 
-    console.error("Discord OAuth response:", {
-      status: res.status,
-      body,
-      retryAfter: res.headers.get("retry-after"),
-      remaining: res.headers.get("x-ratelimit-remaining"),
-      limit: res.headers.get("x-ratelimit-limit"),
-      reset: res.headers.get("x-ratelimit-reset"),
-      global: res.headers.get("x-ratelimit-global"),
-    });
+    console.error(
+      "DISCORD_DIAGNOSTIC status=" +
+        res.status +
+        " retry-after=" +
+        res.headers.get("retry-after") +
+        " remaining=" +
+        res.headers.get("x-ratelimit-remaining") +
+        " limit=" +
+        res.headers.get("x-ratelimit-limit") +
+        " reset=" +
+        res.headers.get("x-ratelimit-reset") +
+        " global=" +
+        res.headers.get("x-ratelimit-global")
+    );
+
+    console.error("DISCORD_BODY " + body);
 
     throw new Error(
       `Discord token exchange failed: ${res.status} ${body}`
@@ -55,9 +62,7 @@ async function getUser(accessToken) {
   return res.json();
 }
 
-// Requires the bot to be a member of the guild. A single-member lookup
-// like this does NOT require the privileged "Server Members Intent".
-// That's only needed for bulk/gateway member syncing.
+// Requires the bot to be a member of the guild.
 async function getMemberRoles(discordUserId) {
   const res = await fetch(
     `https://discord.com/api/guilds/${process.env.DISCORD_GUILD_ID}/members/${discordUserId}`,
@@ -69,7 +74,7 @@ async function getMemberRoles(discordUserId) {
   );
 
   if (res.status === 404) {
-    return []; // logged in with Discord but not in your server
+    return [];
   }
 
   if (!res.ok) {
