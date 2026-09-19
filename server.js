@@ -161,7 +161,6 @@ app.get("/api/my-submissions", requireAuth, (req, res) => {
     verdict: r.verdict,
     active: r.active,
     attempt_number: r.attempt_number,
-    reopened: r.reopened,
     submitted_at: r.submitted_at,
     reviewed_at: r.reviewed_at,
   }));
@@ -234,7 +233,6 @@ app.get("/api/senior/submissions", requireSenior, (req, res) => {
     verdict: r.verdict,
     active: r.active,
     attempt_number: r.attempt_number,
-    reopened: r.reopened,
     reviewer_name: r.reviewer_name,
     submitted_at: r.submitted_at,
     reviewed_at: r.reviewed_at,
@@ -242,9 +240,6 @@ app.get("/api/senior/submissions", requireSenior, (req, res) => {
   res.json(rows);
 });
 
-// Full detail for one submission, same shape as the admin view but also
-// includes override_history and reopen info, since only a Senior needs
-// to see that.
 app.get("/api/senior/submissions/:id", requireSenior, (req, res) => {
   const row = db.getSubmissionById(req.params.id);
   if (!row) return res.status(404).json({ error: "Not found" });
@@ -266,14 +261,24 @@ app.get("/api/senior/candidates/:discordId", requireSenior, (req, res) => {
       status: r.status,
       verdict: r.verdict,
       active: r.active,
-      reopened: r.reopened,
-      reopen_reason: r.reopen_reason,
       reviewer_name: r.reviewer_name,
       override_history: r.override_history,
       submitted_at: r.submitted_at,
       reviewed_at: r.reviewed_at,
     })),
   });
+});
+
+app.post("/api/senior/submissions/:id/review", requireSenior, (req, res) => {
+  const { verdict, notes } = req.body;
+  const updated = db.reviewSubmission(req.params.id, {
+    verdict,
+    notes,
+    reviewer_id: req.session.user.id,
+    reviewer_name: req.session.user.username,
+  });
+  if (!updated) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
 });
 
 app.post("/api/senior/submissions/:id/override", requireSenior, (req, res) => {
@@ -284,20 +289,6 @@ app.post("/api/senior/submissions/:id/override", requireSenior, (req, res) => {
   const updated = db.overrideSubmission(req.params.id, {
     verdict,
     notes,
-    reason,
-    by_id: req.session.user.id,
-    by_name: req.session.user.username,
-  });
-  if (!updated) return res.status(404).json({ error: "Not found" });
-  res.json({ ok: true });
-});
-
-app.post("/api/senior/submissions/:id/reopen", requireSenior, (req, res) => {
-  const { reason } = req.body;
-  if (!reason || !reason.trim()) {
-    return res.status(400).json({ error: "A reason is required to reopen a quiz." });
-  }
-  const updated = db.reopenSubmission(req.params.id, {
     reason,
     by_id: req.session.user.id,
     by_name: req.session.user.username,

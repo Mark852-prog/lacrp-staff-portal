@@ -39,7 +39,7 @@ function logAudit({ action, target_type, target_id, actor_id, actor_name, detail
   const rows = loadFile(auditPath);
   const entry = {
     id: nextId(rows),
-    action, // e.g. 'submission_created' | 'review' | 'override' | 'reopen'
+    action, // e.g. 'submission_created' | 'review' | 'override'
     target_type, // 'submission'
     target_id,
     actor_id,
@@ -80,18 +80,13 @@ function insertSubmission({ discord_id, username, rank, answers }) {
     rank,
     answers, // { questionId: { value, optionIndex? } }
     attempt_number: priorAttempts + 1,
-    active: true, // false once reopened/superseded; archived but kept for history
+    active: true, // false once the attempt is failed; archived but kept for history
     status: "pending", // 'pending' | 'reviewed'
     verdict: null, // 'pass' | 'fail' | null
     notes: null,
     reviewer_id: null,
     reviewer_name: null,
     override_history: [], // [{ previous_verdict, previous_notes, reason, by_id, by_name, at }]
-    reopened: false,
-    reopen_reason: null,
-    reopened_by_id: null,
-    reopened_by_name: null,
-    reopened_at: null,
     submitted_at: new Date().toISOString(),
     reviewed_at: null,
   };
@@ -110,24 +105,17 @@ function insertSubmission({ discord_id, username, rank, answers }) {
   return row;
 }
 
-// The one submission that currently "counts" for a candidate, the thing
-// that blocks a fresh attempt until a Senior reopens it.
 function getActiveSubmissionForUser(discordId) {
   return (
     loadFile(submissionsPath)
-      .filter((r) => r.discord_id === discordId && r.active !== false)
+      .filter(
+        (r) =>
+          r.discord_id === discordId &&
+          r.active !== false &&
+          r.verdict !== "fail"
+      )
       .sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at))[0] || null
   );
-}
-
-function getAllSubmissions({ status, q } = {}) {
-  let rows = loadFile(submissionsPath).sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
-  if (status) rows = rows.filter((r) => r.status === status);
-  if (q) {
-    const needle = q.toLowerCase();
-    rows = rows.filter((r) => (r.username || "").toLowerCase().includes(needle));
-  }
-  return rows;
 }
 
 function getSubmissionsByDiscordId(discordId) {
@@ -148,6 +136,7 @@ function reviewSubmission(id, { verdict, notes, reviewer_id, reviewer_name }) {
     ...rows[idx],
     status: "reviewed",
     verdict: verdict || null,
+    active: verdict === "fail" ? false : true,
     notes: notes || null,
     reviewer_id,
     reviewer_name,
@@ -180,6 +169,7 @@ function overrideSubmission(id, { verdict, notes, reason, by_id, by_name }) {
     ...prior,
     status: "reviewed",
     verdict: verdict || prior.verdict,
+    active: (verdict || prior.verdict) === "fail" ? false : true,
     notes: notes || prior.notes,
     override_history: [
       ...(prior.override_history || []),
@@ -208,38 +198,6 @@ function overrideSubmission(id, { verdict, notes, reason, by_id, by_name }) {
   return rows[idx];
 }
 
-// Senior-only: let a candidate retake the quiz. Archives the current
-// submission (kept forever for history) and clears the block so their
-// next /api/submit call creates a brand new attempt.
-function reopenSubmission(id, { reason, by_id, by_name }) {
-  const rows = loadFile(submissionsPath);
-  const idx = rows.findIndex((r) => String(r.id) === String(id));
-  if (idx === -1) return null;
-
-  rows[idx] = {
-    ...rows[idx],
-    active: false,
-    reopened: true,
-    reopen_reason: reason,
-    reopened_by_id: by_id,
-    reopened_by_name: by_name,
-    reopened_at: new Date().toISOString(),
-  };
-  saveFile(submissionsPath, rows);
-
-  logAudit({
-    action: "reopen",
-    target_type: "submission",
-    target_id: id,
-    actor_id: by_id,
-    actor_name: by_name,
-    details: "Candidate cleared to retake the quiz",
-    reason,
-  });
-
-  return rows[idx];
-}
-
 function getStats() {
   const rows = loadFile(submissionsPath);
   const reviewed = rows.filter((r) => r.status === "reviewed");
@@ -261,7 +219,15 @@ function getStats() {
     avg_attempts: avgAttempts,
   };
 }
-
+function getAllSubmissions({ status, q } = {}) {
+  let rows = loadFile(submissionsPath).sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+  if (status) rows = rows.filter((r) => r.status === status);
+  if (q) {
+    const needle = q.toLowerCase();
+    rows = rows.filter((r) => (r.username || "").toLowerCase().includes(needle));
+  }
+  return rows;
+}
 module.exports = {
   insertSubmission,
   getActiveSubmissionForUser,
@@ -270,7 +236,6 @@ module.exports = {
   getSubmissionById,
   reviewSubmission,
   overrideSubmission,
-  reopenSubmission,
   getStats,
   logAudit,
   getAuditLog,

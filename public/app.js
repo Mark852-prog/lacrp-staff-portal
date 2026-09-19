@@ -204,7 +204,7 @@ async function renderDashboard() {
           <div class="activity-item">
             <div class="activity-dot ${s.status === "pending" ? "pending" : s.verdict === "pass" ? "pass" : s.verdict === "fail" ? "fail" : ""}"></div>
             <div>
-              <p class="activity-text">Attempt #${s.attempt_number || 1}, ${s.status === "pending" ? "awaiting review" : s.verdict === "pass" ? "passed" : s.verdict === "fail" ? "needs retake" : "reviewed"}${s.reopened ? " (reopened for retake)" : ""}</p>
+              <p class="activity-text">Attempt #${s.attempt_number || 1}, ${s.status === "pending" ? "awaiting review" : s.verdict === "pass" ? "passed" : s.verdict === "fail" ? "needs retake" : "reviewed"}</p>
               <p class="activity-time">${timeAgo(s.submitted_at)}</p>
             </div>
           </div>
@@ -314,7 +314,6 @@ function activityLabel(a) {
     submission_created: `<strong>${a.actor_name}</strong> submitted an attempt`,
     review: `<strong>${a.actor_name}</strong> reviewed a submission`,
     override: `<strong>${a.actor_name}</strong> overrode a result`,
-    reopen: `<strong>${a.actor_name}</strong> reopened a quiz for retake`,
     export: `<strong>${a.actor_name}</strong> exported records`,
   };
   return labels[a.action] || `<strong>${a.actor_name}</strong> ${a.action}`;
@@ -666,7 +665,7 @@ async function renderSeniorActivity() {
               <div class="admin-row">
                 <div class="who">
                   <div>
-                    <div class="name">${s.username} <span class="attempt-tag">#${s.attempt_number || 1}</span>${s.active === false ? `<span class="archived-tag">archived</span>` : ""}${s.reopened ? `<span class="reopened-tag">reopened</span>` : ""}</div>
+                    <div class="name">${s.username} <span class="attempt-tag">#${s.attempt_number || 1}</span>${s.active === false ? `<span class="archived-tag">archived</span>` : ""}</div>
                     <div class="meta">${s.rank || "Staff"} · Submitted ${new Date(s.submitted_at).toLocaleString()}${s.reviewer_name ? ` · Marked by ${s.reviewer_name}` : ""}</div>
                   </div>
                 </div>
@@ -709,7 +708,7 @@ async function renderSeniorActivity() {
   });
 }
 
-/* ============== SENIOR: SUBMISSION DETAIL (override / reopen) ============== */
+/* ============== SENIOR: SUBMISSION DETAIL (override) ============== */
 function renderSeniorDetail() {
   const s = state.seniorDetail;
   app.innerHTML = `
@@ -730,9 +729,7 @@ function renderSeniorDetail() {
             ${s.reviewer_name ? `<span class="meta-inline">Marked by ${s.reviewer_name}</span>` : ""}
           </div>
 
-          ${s.reopened ? `
-            <div class="info-banner">This attempt was reopened by ${s.reopened_by_name} on ${new Date(s.reopened_at).toLocaleString()}.<br>Reason: ${s.reopen_reason}</div>
-          ` : ""}
+
 
           ${(s.override_history && s.override_history.length > 0) ? `
             <div class="info-banner override">
@@ -758,7 +755,6 @@ function renderSeniorDetail() {
               }
             </div>
           `).join("")}
-
           <div class="review-panel">
             <h3 class="panel-heading">${icon.flag}Override result</h3>
             <p class="panel-sub">Changes the recorded verdict. The previous verdict is kept in history, never erased. A reason is required.</p>
@@ -769,13 +765,6 @@ function renderSeniorDetail() {
             <textarea class="notes-textarea" id="overrideNotes" placeholder="Updated notes (optional)"></textarea>
             <textarea class="notes-textarea" id="overrideReason" placeholder="Reason for the override (required)"></textarea>
             <button class="btn-start" id="saveOverrideBtn" disabled>Save override</button>
-          </div>
-
-          <div class="review-panel">
-            <h3 class="panel-heading">${icon.history}Reopen for retake</h3>
-            <p class="panel-sub">Lets this candidate submit a brand new attempt. This attempt stays on file, archived, for history. A reason is required.</p>
-            <textarea class="notes-textarea" id="reopenReason" placeholder="Reason for reopening (required)"></textarea>
-            <button class="btn-ghost" id="reopenBtn" ${s.active === false ? "disabled" : ""}>${s.active === false ? "Already reopened" : "Reopen this quiz"}</button>
           </div>
         </div>
       </div>
@@ -812,18 +801,6 @@ function renderSeniorDetail() {
     }
   };
 
-  document.getElementById("reopenBtn").onclick = async (e) => {
-    const reason = document.getElementById("reopenReason").value;
-    if (!reason.trim()) { alert("A reason is required to reopen a quiz."); return; }
-    try {
-      await api(`/api/senior/submissions/${s.id}/reopen`, { method: "POST", body: JSON.stringify({ reason }) });
-      e.target.textContent = "Reopened ✓";
-      setTimeout(() => { state.view = "seniorActivity"; render(); }, 700);
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
   document.getElementById("backToListBtn").onclick = () => { state.view = "seniorActivity"; render(); };
 }
 
@@ -846,7 +823,7 @@ function renderCandidateHistory() {
             <div class="admin-row">
               <div class="who">
                 <div>
-                  <div class="name">Attempt #${a.attempt_number}${a.active === false ? `<span class="archived-tag">archived</span>` : `<span class="active-tag">current</span>`}${a.reopened ? `<span class="reopened-tag">reopened</span>` : ""}</div>
+                  <div class="name">Attempt #${a.attempt_number}${a.active === false ? `<span class="archived-tag">archived</span>` : `<span class="active-tag">current</span>`}</div>
                   <div class="meta">Submitted ${new Date(a.submitted_at).toLocaleString()}${a.reviewer_name ? ` · Marked by ${a.reviewer_name}` : ""}</div>
                 </div>
               </div>
@@ -902,7 +879,6 @@ async function renderAuditLog() {
             <option value="submission_created" ${state.auditFilter.action === "submission_created" ? "selected" : ""}>Submitted</option>
             <option value="review" ${state.auditFilter.action === "review" ? "selected" : ""}>Reviewed</option>
             <option value="override" ${state.auditFilter.action === "override" ? "selected" : ""}>Override</option>
-            <option value="reopen" ${state.auditFilter.action === "reopen" ? "selected" : ""}>Reopen</option>
             <option value="export" ${state.auditFilter.action === "export" ? "selected" : ""}>Export</option>
           </select>
         </div>
