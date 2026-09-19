@@ -6,7 +6,7 @@ const path = require("path");
 
 const db = require("./db");
 const { exchangeCode, getUser, getMemberRoles } = require("./discord");
-const { resolveRank, isAdmin, isTrainee } = require("./roles");
+const { resolveRank, isAdmin, isSenior, isTrainee } = require("./roles");
 const questions = require("./questions");
 
 const REQUIRED_ENV = [
@@ -25,8 +25,6 @@ if (missing.length) {
 }
 
 const app = express();
-app.set("trust proxy", 1);
-
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -53,6 +51,11 @@ function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "Not signed in" });
   if (!req.session.user.isAdmin) return res.status(403).json({ error: "Admins only" });
+  next();
+}
+function requireSenior(req, res, next) {
+  if (!req.session.user) return res.status(401).json({ error: "Not signed in" });
+  if (!req.session.user.isSenior) return res.status(403).json({ error: "Senior High Rank only" });
   next();
 }
 function requireTrainee(req, res, next) {
@@ -85,6 +88,7 @@ app.get("/callback", async (req, res) => {
     const roleIds = await getMemberRoles(discordUser.id);
     const rank = resolveRank(roleIds);
     const admin = isAdmin(roleIds);
+    const senior = isSenior(roleIds);
     const trainee = isTrainee(roleIds);
 
     const avatar = discordUser.avatar
@@ -97,6 +101,7 @@ app.get("/callback", async (req, res) => {
       avatar,
       rank,
       isAdmin: admin,
+      isSenior: senior,
       isTrainee: trainee,
     };
 
@@ -135,8 +140,8 @@ app.post("/api/submit", requireTrainee, (req, res) => {
   if (!answers || typeof answers !== "object") {
     return res.status(400).json({ error: "Missing answers" });
   }
-  const existing = db.getSubmissionsByDiscordId(req.session.user.id);
-  if (existing.length > 0) {
+  const existing = db.getActiveSubmissionForUser(req.session.user.id);
+  if (existing) {
     return res.status(409).json({ error: "You've already submitted this quiz." });
   }
   db.insertSubmission({
@@ -153,6 +158,9 @@ app.get("/api/my-submissions", requireAuth, (req, res) => {
     id: r.id,
     status: r.status,
     verdict: r.verdict,
+    active: r.active,
+    attempt_number: r.attempt_number,
+    reopened: r.reopened,
     submitted_at: r.submitted_at,
     reviewed_at: r.reviewed_at,
   }));
@@ -161,9 +169,24 @@ app.get("/api/my-submissions", requireAuth, (req, res) => {
 
 // ---------------- Admin-only ----------------
 
+function mergeAnswers(row) {
+  const givenAnswers = row.answers;
+  return questions.map((q) => ({
+    id: q.id,
+    section: q.section,
+    type: q.type,
+    q: q.q,
+    options: q.options || null,
+    correctAnswer: q.type === "mc" ? q.options[q.correct] : null,
+    modelSummary: q.modelSummary || null,
+    note: q.note || null,
+    givenAnswer: givenAnswers[q.id] ? givenAnswers[q.id].value : null,
+  }));
+}
+
 app.get("/api/admin/submissions", requireAdmin, (req, res) => {
   const { status } = req.query;
-  const rows = db.getAllSubmissions(status).map((r) => ({
+  const rows = db.getAllSubmissions({ status }).map((r) => ({
     id: r.id,
     discord_id: r.discord_id,
     username: r.username,
@@ -179,21 +202,7 @@ app.get("/api/admin/submissions", requireAdmin, (req, res) => {
 app.get("/api/admin/submissions/:id", requireAdmin, (req, res) => {
   const row = db.getSubmissionById(req.params.id);
   if (!row) return res.status(404).json({ error: "Not found" });
-
-  const givenAnswers = row.answers;
-  const merged = questions.map((q) => ({
-    id: q.id,
-    section: q.section,
-    type: q.type,
-    q: q.q,
-    options: q.options || null,
-    correctAnswer: q.type === "mc" ? q.options[q.correct] : null,
-    modelSummary: q.modelSummary || null,
-    note: q.note || null,
-    givenAnswer: givenAnswers[q.id] ? givenAnswers[q.id].value : null,
-  }));
-
-  res.json({ ...row, answers: merged });
+  res.json({ ...row, answers: mergeAnswers(row) });
 });
 
 app.post("/api/admin/submissions/:id/review", requireAdmin, (req, res) => {
@@ -206,6 +215,137 @@ app.post("/api/admin/submissions/:id/review", requireAdmin, (req, res) => {
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
   res.json({ ok: true });
+});
+
+// ---------------- Senior High Rank only ----------------
+// Everything here requires isSenior, a tier above regular Admin. See
+// roles.config.js: seniorRoleIds.
+
+// All quiz activity, every status, searchable by username.
+app.get("/api/senior/submissions", requireSenior, (req, res) => {
+  const { status, q } = req.query;
+  const rows = db.getAllSubmissions({ status, q }).map((r) => ({
+    id: r.id,
+    discord_id: r.discord_id,
+    username: r.username,
+    rank: r.rank,
+    status: r.status,
+    verdict: r.verdict,
+    active: r.active,
+    attempt_number: r.attempt_number,
+    reopened: r.reopened,
+    reviewer_name: r.reviewer_name,
+    submitted_at: r.submitted_at,
+    reviewed_at: r.reviewed_at,
+  }));
+  res.json(rows);
+});
+
+// Full detail for one submission, same shape as the admin view but also
+// includes override_history and reopen info, since only a Senior needs
+// to see that.
+app.get("/api/senior/submissions/:id", requireSenior, (req, res) => {
+  const row = db.getSubmissionById(req.params.id);
+  if (!row) return res.status(404).json({ error: "Not found" });
+  res.json({ ...row, answers: mergeAnswers(row) });
+});
+
+// A candidate's complete attempt history, oldest to newest, plus which
+// one (if any) is currently the active/counted attempt.
+app.get("/api/senior/candidates/:discordId", requireSenior, (req, res) => {
+  const rows = db.getSubmissionsByDiscordId(req.params.discordId);
+  if (rows.length === 0) return res.status(404).json({ error: "No submissions from this candidate" });
+  res.json({
+    discord_id: req.params.discordId,
+    username: rows[0].username,
+    rank: rows[0].rank,
+    attempts: rows.map((r) => ({
+      id: r.id,
+      attempt_number: r.attempt_number,
+      status: r.status,
+      verdict: r.verdict,
+      active: r.active,
+      reopened: r.reopened,
+      reopen_reason: r.reopen_reason,
+      reviewer_name: r.reviewer_name,
+      override_history: r.override_history,
+      submitted_at: r.submitted_at,
+      reviewed_at: r.reviewed_at,
+    })),
+  });
+});
+
+app.post("/api/senior/submissions/:id/override", requireSenior, (req, res) => {
+  const { verdict, notes, reason } = req.body;
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ error: "A reason is required to override a result." });
+  }
+  const updated = db.overrideSubmission(req.params.id, {
+    verdict,
+    notes,
+    reason,
+    by_id: req.session.user.id,
+    by_name: req.session.user.username,
+  });
+  if (!updated) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
+});
+
+app.post("/api/senior/submissions/:id/reopen", requireSenior, (req, res) => {
+  const { reason } = req.body;
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ error: "A reason is required to reopen a quiz." });
+  }
+  const updated = db.reopenSubmission(req.params.id, {
+    reason,
+    by_id: req.session.user.id,
+    by_name: req.session.user.username,
+  });
+  if (!updated) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
+});
+
+app.get("/api/senior/audit", requireSenior, (req, res) => {
+  const { action, actor_id, target_id, q, limit } = req.query;
+  const rows = db.getAuditLog({ action, actor_id, target_id, q, limit: limit ? Number(limit) : 200 });
+  res.json(rows);
+});
+
+app.get("/api/senior/stats", requireSenior, (req, res) => {
+  res.json(db.getStats());
+});
+
+// Simple CSV export for either submissions or the audit log, since
+// management asked to be able to export records for documentation.
+app.get("/api/senior/export", requireSenior, (req, res) => {
+  const { type } = req.query;
+  let rows, filename, headers;
+
+  if (type === "audit") {
+    rows = db.getAuditLog({ limit: 100000 });
+    headers = ["id", "at", "action", "actor_name", "actor_id", "target_id", "details", "reason"];
+    filename = "lacrp-audit-log.csv";
+  } else {
+    rows = db.getAllSubmissions({});
+    headers = ["id", "username", "discord_id", "rank", "attempt_number", "status", "verdict", "reviewer_name", "submitted_at", "reviewed_at"];
+    filename = "lacrp-submissions.csv";
+  }
+
+  const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [headers.join(","), ...rows.map((r) => headers.map((h) => escape(r[h])).join(","))].join("\n");
+
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(csv);
+
+  db.logAudit({
+    action: "export",
+    target_type: type === "audit" ? "audit_log" : "submissions",
+    target_id: null,
+    actor_id: req.session.user.id,
+    actor_name: req.session.user.username,
+    details: `Exported ${rows.length} ${type === "audit" ? "audit log" : "submission"} rows`,
+  });
 });
 
 const PORT = process.env.PORT || 3000;

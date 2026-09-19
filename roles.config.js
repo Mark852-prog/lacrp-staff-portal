@@ -31,11 +31,18 @@ module.exports = {
     "1535668008545030194"
   ],
 
+  // Senior High Rank tier. Sits ABOVE adminRoleIds.
+  seniorRoleIds: [
+    "1535664831489900615",
+    "1535666571429548112",
+    "1535669374051160226",
+  ],
+
   // Anyone holding ANY of these role IDs is allowed to open and submit
   // the quiz. Everyone else gets a "not assigned to you" message instead
   // of the quiz, even if they can log in fine.
   // Admins (adminRoleIds above) can ALSO always open the quiz, so they
-  // can preview/test it — remove that behavior in roles.js if you don't
+  // can preview/test it, remove that behavior in roles.js if you don't
   // want that.
   traineeRoleIds: [
     "1535668859414118450",
