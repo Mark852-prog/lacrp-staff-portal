@@ -260,8 +260,8 @@ async function renderDashboard() {
                     ? (() => {
                         if (latest.status === "pending") return `<span class="status-pill"><span class="dot"></span>Awaiting review</span>`;
                         if (latest.verdict === "pass") return `<span class="status-pill pass"><span class="dot"></span>Passed</span>`;
-                        if (latest.verdict === "fail") return `<span class="status-pill fail"><span class="dot"></span>Needs retake, contact an Admin</span>`;
-                        return `<span class="status-pill done"><span class="dot"></span>Reviewed</span>`;
+                        if (latest.verdict === "fail" && latest.active !== false) return `<span class="status-pill fail"><span class="dot"></span>Needs retake, contact an Admin</span>`;
+                        if (latest.active === false) return `<button class="btn-start" id="startBtn">Start quiz</button>`; return `<span class="status-pill done"><span class="dot"></span>Reviewed</span>`;
                       })()
                     : `<button class="btn-start" id="startBtn">Start quiz</button>`
                 }
