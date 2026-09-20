@@ -313,24 +313,24 @@ app.post("/api/senior/submissions/:id/override", requireSenior, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/senior/audit", requireSenior, (req, res) => {
-  const { action, actor_id, target_id, q, limit } = req.query;
-  const rows = db.getAuditLog({ action, actor_id, target_id, q, limit: limit ? Number(limit) : 200 });
+app.get("/api/senior/audit", requireSenior, async (req, res) => {
+const { action, actor_id, target_id, q, limit } = req.query;
+  const rows = await db.getAuditLog({ action, actor_id, target_id, q, limit: limit ? Number(limit) : 200 });
   res.json(rows);
 });
 
-app.get("/api/senior/stats", requireSenior, (req, res) => {
-  res.json(db.getStats());
+app.get("/api/senior/export", requireSenior, async (req, res) => {
+res.json(db.getStats());
 });
 
 // Simple CSV export for either submissions or the audit log, since
 // management asked to be able to export records for documentation.
-app.get("/api/senior/export", requireSenior, (req, res) => {
+app.get("/api/senior/export", requireSenior, async (req, res) => {
   const { type } = req.query;
   let rows, filename, headers;
 
   if (type === "audit") {
-    rows = db.getAuditLog({ limit: 100000 });
+    rows = await db.getAuditLog({ limit: 100000 });
     headers = ["id", "at", "action", "actor_name", "actor_id", "target_id", "details", "reason"];
     filename = "lacrp-audit-log.csv";
   } else {
