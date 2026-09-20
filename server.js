@@ -135,8 +135,7 @@ app.get("/api/questions", requireTrainee, (req, res) => {
   }));
   res.json(sanitized);
 });
-
-app.post("/api/submit", requireTrainee, (req, res) => {
+app.post("/api/submit", requireTrainee, async (req, res) => {
   const { answers } = req.body;
   if (!answers || typeof answers !== "object") {
     return res.status(400).json({ error: "Missing answers" });
@@ -145,12 +144,27 @@ app.post("/api/submit", requireTrainee, (req, res) => {
   if (existing) {
     return res.status(409).json({ error: "You've already submitted this quiz." });
   }
-  db.insertSubmission({
+  const submission = db.insertSubmission({
     discord_id: req.session.user.id,
     username: req.session.user.username,
     rank: req.session.user.rank,
     answers,
   });
+
+console.log("QUIZ SUBMISSION CREATED:", submission);
+
+  try {
+    await fetch(process.env.BOT_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.QUIZ_WEBHOOK_SECRET}`,
+      },
+      body: JSON.stringify(submission),
+    });
+  } catch (error) {
+    console.error("Failed to notify Discord bot:", error);
+  }
   res.json({ ok: true });
 });
 
