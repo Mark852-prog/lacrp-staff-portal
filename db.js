@@ -37,12 +37,11 @@ function nextId(rows) {
 // entry once written, only add and read. Keep it that way, an audit log
 // that can be quietly edited isn't an audit log.
 
-function logAudit({ action, target_type, target_id, actor_id, actor_name, details, reason }) {
-  const rows = loadFile(auditPath);
+async function logAudit({ action, target_type, target_id, actor_id, actor_name, details, reason }) {
   const entry = {
-    id: nextId(rows),
-    action, // e.g. 'submission_created' | 'review' | 'override'
-    target_type, // 'submission'
+    id: await redis.incr("lacrp:audit:next_id"),
+    action,
+    target_type,
     target_id,
     actor_id,
     actor_name,
@@ -50,8 +49,21 @@ function logAudit({ action, target_type, target_id, actor_id, actor_name, detail
     reason: reason || null,
     at: new Date().toISOString(),
   };
-  rows.push(entry);
-  saveFile(auditPath, rows);
+
+  try {
+    const now = Date.now();
+    const fiveDaysAgo = now - (5 * 24 * 60 * 60 * 1000);
+
+    await redis.zadd("lacrp:audit", {
+      score: now,
+      member: JSON.stringify(entry),
+    });
+
+    await redis.zremrangebyscore("lacrp:audit", 0, fiveDaysAgo);
+  } catch (error) {
+    console.error("Failed to save audit log:", error);
+  }
+
   return entry;
 }
 
