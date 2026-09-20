@@ -154,13 +154,16 @@ app.post("/api/submit", requireTrainee, async (req, res) => {
 console.log("QUIZ SUBMISSION CREATED:", submission);
 
   try {
-    await fetch(process.env.BOT_WEBHOOK_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.QUIZ_WEBHOOK_SECRET}`,
-      },
-      body: JSON.stringify(submission),
+    const response = await fetch(process.env.BOT_WEBHOOK_URL, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${process.env.QUIZ_WEBHOOK_SECRET}`,
+  },
+  body: JSON.stringify(submission),
+});
+
+console.log("BOT RESPONSE:", response.status, await response.text());
     });
   } catch (error) {
     console.error("Failed to notify Discord bot:", error);
