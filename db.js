@@ -8,6 +8,8 @@
 
 const fs = require("fs");
 const path = require("path");
+const { Redis } = require("@upstash/redis");
+const redis = Redis.fromEnv();
 
 const dataDir = path.join(__dirname, "data");
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
