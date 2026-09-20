@@ -346,7 +346,7 @@ app.get("/api/senior/export", requireSenior, (req, res) => {
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.send(csv);
 
-  db.logAudit({
+    await db.logAudit({
     action: "export",
     target_type: type === "audit" ? "audit_log" : "submissions",
     target_id: null,
