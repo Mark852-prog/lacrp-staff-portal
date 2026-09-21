@@ -50,6 +50,67 @@ function nextId(rows) {
 
 // ==================== AUDIT LOG ====================
 
+async function logAudit({
+  action,
+  target_type,
+  target_id,
+  actor_id,
+  actor_name,
+  details,
+  reason,
+}) {
+  let auditId = Date.now();
+
+  if (redis) {
+    try {
+      auditId = await redis.incr("lacrp:audit:next_id");
+    } catch (error) {
+      console.error("Redis audit ID failed:", error.message);
+    }
+  }
+
+  const entry = {
+    id: auditId,
+    action,
+    target_type,
+    target_id,
+    actor_id,
+    actor_name,
+    details: details || null,
+    reason: reason || null,
+    at: new Date().toISOString(),
+  };
+
+  if (redis) {
+    try {
+      const now = Date.now();
+      const fiveDaysAgo = now - 5 * 24 * 60 * 60 * 1000;
+
+      await redis.zadd("lacrp:audit", {
+        score: now,
+        member: JSON.stringify(entry),
+      });
+
+      await redis.zremrangebyscore(
+        "lacrp:audit",
+        0,
+        fiveDaysAgo
+      );
+    } catch (error) {
+      console.error(
+        "Failed to save audit log to Redis:",
+        error.message
+      );
+    }
+  } else {
+    console.error(
+      "Redis is unavailable. Audit entry was not saved to Redis."
+    );
+  }
+
+  return entry;
+}
+
 async function getAuditLog({
   action,
   actor_id,
