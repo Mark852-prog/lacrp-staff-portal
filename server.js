@@ -154,7 +154,7 @@ app.post("/api/submit", requireTrainee, async (req, res) => {
 console.log("QUIZ SUBMISSION CREATED:", submission);
 
 try {
-  const response = await fetch(process.env.BOT_WEBHOOK_URL, {
+  const response = await fetch("https://lacrp-bot.onrender.com/api/quiz-submission", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
