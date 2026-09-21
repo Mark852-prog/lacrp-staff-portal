@@ -33,7 +33,7 @@ a{ color:inherit; text-decoration:none; }
   from{ opacity:0; transform:translateY(8px); }
   to{ opacity:1; transform:translateY(0); }
 }
-.shell, .splash, .quiz-shell{ animation:viewEnter .32s ease both; }
+.splash, .quiz-shell{ animation:viewEnter .32s ease both; }
 
 @keyframes rowEnter{
   from{ opacity:0; transform:translateY(4px); }
