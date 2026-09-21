@@ -50,71 +50,32 @@ function nextId(rows) {
 
 // ==================== AUDIT LOG ====================
 
-async function logAudit({
-  action,
-  target_type,
-  target_id,
-  actor_id,
-  actor_name,
-  details,
-  reason,
-}) {
-  let auditId = Date.now();
-
-  if (redis) {
-    try {
-      auditId = await redis.incr("lacrp:audit:next_id");
-    } catch (error) {
-      console.error("Redis audit ID failed:", error.message);
-      console.error("Audit log will continue using a temporary ID.");
-    }
-  }
-
-  const entry = {
-    id: auditId,
-    action,
-    target_type,
-    target_id,
-    actor_id,
-    actor_name,
-    details: details || null,
-    reason: reason || null,
-    at: new Date().toISOString(),
-  };
-
-  if (redis) {
-    try {
-      const now = Date.now();
-      const fiveDaysAgo = now - 5 * 24 * 60 * 60 * 1000;
-
-      await redis.zadd("lacrp:audit", {
-        score: now,
-        member: JSON.stringify(entry),
-      });
-
-      await redis.zremrangebyscore(
-        "lacrp:audit",
-        0,
-        fiveDaysAgo
-      );
-    } catch (error) {
-      console.error("Failed to save audit log to Redis:", error.message);
-    }
-  } else {
-    console.error("Redis is unavailable. Audit entry was not saved to Redis.");
-  }
-
-  return entry;
-}
-
-function getAuditLog({
+async function getAuditLog({
   action,
   actor_id,
   target_id,
   q,
   limit,
 } = {}) {
-  let rows = loadFile(auditPath).sort(
+  let rows = [];
+
+  if (redis) {
+    try {
+      const entries = await redis.zrange("lacrp:audit", 0, -1);
+
+      rows = entries.map((entry) => {
+        if (typeof entry === "string") {
+          return JSON.parse(entry);
+        }
+        return entry;
+      });
+    } catch (error) {
+      console.error("Failed to read audit log from Redis:", error.message);
+      return [];
+    }
+  }
+
+  rows.sort(
     (a, b) => new Date(b.at) - new Date(a.at)
   );
 
