@@ -14,8 +14,12 @@ get a "Pending Submissions" review queue with an answer key.
 - **Quiz**, staff answer questions one at a time. Correct answers and
   model answers are **never sent to the browser** for a non-admin, they
   only exist in `questions.js` on the server.
-- **Submissions**, stored in a local JSON file (`data/submissions.json`),
-  no database server or native modules needed.
+- **Submissions**, stored in Upstash Redis (`UPSTASH_REDIS_REST_URL` /
+  `UPSTASH_REDIS_REST_TOKEN`), the same store as the audit log. Without
+  those it falls back to `data/submissions.json`, which is fine locally but
+  is wiped on every Render deploy/restart. `GET /api/health` shows which
+  storage is live. On startup, rows found in an old `data/submissions.json`
+  are imported into Redis.
 - **Admin review**, anyone with an admin role sees a "Pending Submissions"
   queue, can open any attempt, see the staff member's answer next to the
   correct answer / model answer, and mark it Pass / Needs retake with notes.
@@ -118,7 +122,7 @@ lacrp-portal/
   roles.js            Turns role IDs into rank label / admin / trainee flags
   roles.config.js      <-- EDIT THIS with your real role IDs
   questions.js         Quiz content + answer key (server-only)
-  db.js                Plain JSON-file storage (no native modules)
+  db.js                Submission storage (Redis, JSON-file fallback) + audit log
   data/                 submissions.json lives here at runtime (gitignored)
   public/
     index.html
