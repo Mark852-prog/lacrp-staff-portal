@@ -19,6 +19,8 @@ if (redisUrl && redisToken) {
 }
 
 // ==================== FILE STORAGE ====================
+// Only used when Redis isn't configured (local development). Render's disk
+// is wiped on every deploy/restart/spin-down, so this is NOT durable there.
 
 const dataDir = path.join(__dirname, "data");
 
@@ -32,20 +34,26 @@ const auditPath = path.join(dataDir, "audit.json");
 function loadFile(filePath) {
   if (!fs.existsSync(filePath)) return [];
 
+  const raw = fs.readFileSync(filePath, "utf8");
   try {
-    const raw = fs.readFileSync(filePath, "utf8");
     return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+  } catch (error) {
+    // Never treat a corrupt file as empty: the next save would overwrite
+    // every submission with just the new one.
+    console.error(`[db] ${filePath} is not valid JSON; refusing to read it:`, error.message);
+    throw new Error("Submission storage file is corrupt");
   }
 }
 
 function saveFile(filePath, rows) {
-  fs.writeFileSync(filePath, JSON.stringify(rows, null, 2));
+  // Write-then-rename so a crash mid-write can't leave a truncated file.
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(rows, null, 2));
+  fs.renameSync(tmp, filePath);
 }
 
 function nextId(rows) {
-  return rows.reduce((max, r) => Math.max(max, r.id), 0) + 1;
+  return rows.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1;
 }
 
 // ==================== AUDIT LOG ====================
@@ -176,87 +184,139 @@ async function getAuditLog({
 }
 
 // ==================== SUBMISSIONS ====================
+// Stored in Redis when configured: hash `lacrp:submissions` (field = id,
+// value = JSON row) plus an INCR counter for ids.
 
+const STATUS = Object.freeze({ PENDING: "pending", REVIEWED: "reviewed" });
+const VERDICTS = Object.freeze(["pass", "fail"]);
+
+const SUBMISSIONS_KEY = "lacrp:submissions";
+const SUBMISSIONS_ID_KEY = "lacrp:submissions:next_id";
+
+const storageBackend = redis ? "redis" : "file";
+
+function parseRow(value) {
+  return typeof value === "string" ? JSON.parse(value) : value;
+}
+
+async function readAllRows() {
+  if (redis) {
+    const hash = await redis.hgetall(SUBMISSIONS_KEY);
+    return Object.values(hash || {}).map(parseRow);
+  }
+  return loadFile(submissionsPath);
+}
+
+async function readRow(id) {
+  if (redis) {
+    const value = await redis.hget(SUBMISSIONS_KEY, String(id));
+    return value ? parseRow(value) : null;
+  }
+  return loadFile(submissionsPath).find((r) => String(r.id) === String(id)) || null;
+}
+
+async function writeRow(row) {
+  if (redis) {
+    await redis.hset(SUBMISSIONS_KEY, { [String(row.id)]: JSON.stringify(row) });
+    return;
+  }
+  const rows = loadFile(submissionsPath);
+  const idx = rows.findIndex((r) => String(r.id) === String(row.id));
+  if (idx === -1) rows.push(row);
+  else rows[idx] = row;
+  saveFile(submissionsPath, rows);
+}
+
+async function allocateId(rows) {
+  if (redis) return await redis.incr(SUBMISSIONS_ID_KEY);
+  return nextId(rows);
+}
+
+// All read-modify-write operations run one at a time, so a double-clicked
+// submit or two admins reviewing at once can't interleave and lose data.
+let writeQueue = Promise.resolve();
+function withWriteLock(fn) {
+  const run = writeQueue.then(fn, fn);
+  writeQueue = run.catch(() => {});
+  return run;
+}
+
+function byNewest(a, b) {
+  return new Date(b.submitted_at) - new Date(a.submitted_at);
+}
+
+function isActiveFor(r, discordId) {
+  return r.discord_id === discordId && r.active !== false && r.verdict !== "fail";
+}
+
+// Returns { result: "created" | "duplicate" | "already_active", row }.
+// Only resolves "created" after the row is durably written.
 function insertSubmission({
   discord_id,
   username,
   rank,
   answers,
+  client_submission_id,
 }) {
-  const rows = loadFile(submissionsPath);
+  return withWriteLock(async () => {
+    const rows = await readAllRows();
+    const mine = rows.filter((r) => r.discord_id === discord_id);
 
-  const priorAttempts = rows.filter(
-    (r) => r.discord_id === discord_id
-  ).length;
+    // Same browser retrying the same attempt (e.g. the response was lost).
+    if (client_submission_id) {
+      const same = mine.find((r) => r.client_submission_id === client_submission_id);
+      if (same) return { result: "duplicate", row: same };
+    }
 
-  const row = {
-    id: nextId(rows),
-    discord_id,
-    username,
-    rank,
-    answers,
-    attempt_number: priorAttempts + 1,
-    active: true,
-    status: "pending",
-    verdict: null,
-    notes: null,
-    reviewer_id: null,
-    reviewer_name: null,
-    override_history: [],
-    submitted_at: new Date().toISOString(),
-    reviewed_at: null,
-  };
+    const active = mine.filter((r) => isActiveFor(r, discord_id)).sort(byNewest)[0];
+    if (active) return { result: "already_active", row: active };
 
-  rows.push(row);
-  saveFile(submissionsPath, rows);
+    const row = {
+      id: await allocateId(rows),
+      discord_id,
+      username,
+      rank,
+      answers,
+      attempt_number: mine.length + 1,
+      active: true,
+      status: STATUS.PENDING,
+      verdict: null,
+      notes: null,
+      reviewer_id: null,
+      reviewer_name: null,
+      override_history: [],
+      client_submission_id: client_submission_id || null,
+      submitted_at: new Date().toISOString(),
+      reviewed_at: null,
+    };
 
-  logAudit({
-    action: "submission_created",
-    target_type: "submission",
-    target_id: row.id,
-    actor_id: discord_id,
-    actor_name: username,
-    details: `Attempt #${row.attempt_number} submitted`,
-  }).catch((error) => {
-    console.error("Audit logging failed:", error.message);
+    await writeRow(row);
+
+    logAudit({
+      action: "submission_created",
+      target_type: "submission",
+      target_id: row.id,
+      actor_id: discord_id,
+      actor_name: username,
+      details: `Attempt #${row.attempt_number} submitted`,
+    }).catch((error) => {
+      console.error("Audit logging failed:", error.message);
+    });
+
+    return { result: "created", row };
   });
-
-  return row;
 }
 
-function getActiveSubmissionForUser(discordId) {
-  return (
-    loadFile(submissionsPath)
-      .filter(
-        (r) =>
-          r.discord_id === discordId &&
-          r.active !== false &&
-          r.verdict !== "fail"
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.submitted_at) -
-          new Date(a.submitted_at)
-      )[0] || null
-  );
+async function getActiveSubmissionForUser(discordId) {
+  return (await readAllRows()).filter((r) => isActiveFor(r, discordId)).sort(byNewest)[0] || null;
 }
 
-function getSubmissionsByDiscordId(discordId) {
-  return loadFile(submissionsPath)
-    .filter((r) => r.discord_id === discordId)
-    .sort(
-      (a, b) =>
-        new Date(b.submitted_at) -
-        new Date(a.submitted_at)
-    );
+async function getSubmissionsByDiscordId(discordId) {
+  return (await readAllRows()).filter((r) => r.discord_id === discordId).sort(byNewest);
 }
 
-function getSubmissionById(id) {
-  return (
-    loadFile(submissionsPath).find(
-      (r) => String(r.id) === String(id)
-    ) || null
-  );
+async function getSubmissionById(id) {
+  return readRow(id);
 }
 
 function reviewSubmission(
@@ -268,41 +328,38 @@ function reviewSubmission(
     reviewer_name,
   }
 ) {
-  const rows = loadFile(submissionsPath);
+  return withWriteLock(async () => {
+    const prior = await readRow(id);
+    if (!prior) return null;
 
-  const idx = rows.findIndex(
-    (r) => String(r.id) === String(id)
-  );
+    const row = {
+      ...prior,
+      status: STATUS.REVIEWED,
+      verdict: verdict || null,
+      active: verdict === "fail" ? false : true,
+      notes: notes || null,
+      reviewer_id,
+      reviewer_name,
+      reviewed_at: new Date().toISOString(),
+    };
 
-  if (idx === -1) return null;
+    await writeRow(row);
 
-  rows[idx] = {
-    ...rows[idx],
-    status: "reviewed",
-    verdict: verdict || null,
-    active: verdict === "fail" ? false : true,
-    notes: notes || null,
-    reviewer_id,
-    reviewer_name,
-    reviewed_at: new Date().toISOString(),
-  };
+    logAudit({
+      action: "review",
+      target_type: "submission",
+      target_id: id,
+      actor_id: reviewer_id,
+      actor_name: reviewer_name,
+      details: `Marked ${verdict || "reviewed"}${
+        notes ? `, notes: ${notes}` : ""
+      }`,
+    }).catch((error) => {
+      console.error("Audit logging failed:", error.message);
+    });
 
-  saveFile(submissionsPath, rows);
-
-  logAudit({
-    action: "review",
-    target_type: "submission",
-    target_id: id,
-    actor_id: reviewer_id,
-    actor_name: reviewer_name,
-    details: `Marked ${verdict || "reviewed"}${
-      notes ? `, notes: ${notes}` : ""
-    }`,
-  }).catch((error) => {
-    console.error("Audit logging failed:", error.message);
+    return row;
   });
-
-  return rows[idx];
 }
 
 // ==================== OVERRIDE ====================
@@ -317,64 +374,59 @@ function overrideSubmission(
     by_name,
   }
 ) {
-  const rows = loadFile(submissionsPath);
+  return withWriteLock(async () => {
+    const prior = await readRow(id);
+    if (!prior) return null;
 
-  const idx = rows.findIndex(
-    (r) => String(r.id) === String(id)
-  );
+    const row = {
+      ...prior,
+      status: STATUS.REVIEWED,
+      verdict: verdict || prior.verdict,
+      active:
+        (verdict || prior.verdict) === "fail"
+          ? false
+          : true,
+      notes: notes || prior.notes,
+      override_history: [
+        ...(prior.override_history || []),
+        {
+          previous_verdict: prior.verdict,
+          previous_notes: prior.notes,
+          reason,
+          by_id,
+          by_name,
+          at: new Date().toISOString(),
+        },
+      ],
+    };
 
-  if (idx === -1) return null;
+    await writeRow(row);
 
-  const prior = rows[idx];
+    logAudit({
+      action: "override",
+      target_type: "submission",
+      target_id: id,
+      actor_id: by_id,
+      actor_name: by_name,
+      details: `Changed verdict from ${
+        prior.verdict || "none"
+      } to ${verdict}`,
+      reason,
+    }).catch((error) => {
+      console.error("Audit logging failed:", error.message);
+    });
 
-  rows[idx] = {
-    ...prior,
-    status: "reviewed",
-    verdict: verdict || prior.verdict,
-    active:
-      (verdict || prior.verdict) === "fail"
-        ? false
-        : true,
-    notes: notes || prior.notes,
-    override_history: [
-      ...(prior.override_history || []),
-      {
-        previous_verdict: prior.verdict,
-        previous_notes: prior.notes,
-        reason,
-        by_id,
-        by_name,
-        at: new Date().toISOString(),
-      },
-    ],
-  };
-
-  saveFile(submissionsPath, rows);
-
-  logAudit({
-    action: "override",
-    target_type: "submission",
-    target_id: id,
-    actor_id: by_id,
-    actor_name: by_name,
-    details: `Changed verdict from ${
-      prior.verdict || "none"
-    } to ${verdict}`,
-    reason,
-  }).catch((error) => {
-    console.error("Audit logging failed:", error.message);
+    return row;
   });
-
-  return rows[idx];
 }
 
 // ==================== STATS ====================
 
-function getStats() {
-  const rows = loadFile(submissionsPath);
+async function getStats() {
+  const rows = await readAllRows();
 
   const reviewed = rows.filter(
-    (r) => r.status === "reviewed"
+    (r) => r.status === STATUS.REVIEWED
   );
 
   const pass = reviewed.filter(
@@ -386,7 +438,7 @@ function getStats() {
   ).length;
 
   const pending = rows.filter(
-    (r) => r.status === "pending"
+    (r) => r.status === STATUS.PENDING
   ).length;
 
   const candidateIds = [
@@ -411,12 +463,8 @@ function getStats() {
   };
 }
 
-function getAllSubmissions({ status, q } = {}) {
-  let rows = loadFile(submissionsPath).sort(
-    (a, b) =>
-      new Date(b.submitted_at) -
-      new Date(a.submitted_at)
-  );
+async function getAllSubmissions({ status, q } = {}) {
+  let rows = (await readAllRows()).sort(byNewest);
 
   if (status) {
     rows = rows.filter(
@@ -437,9 +485,56 @@ function getAllSubmissions({ status, q } = {}) {
   return rows;
 }
 
+// ==================== STARTUP ====================
+
+// Verifies storage works and, when Redis is configured, imports any rows
+// left in the old local submissions.json (never overwriting Redis rows) and
+// makes sure new ids can't collide with existing ones.
+async function init() {
+  if (!redis) {
+    console.error(
+      "[db] WARNING: submissions are stored in data/submissions.json. On Render this file is " +
+        "wiped on every deploy/restart, so set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN."
+    );
+    const rows = loadFile(submissionsPath);
+    console.log(`[db] File storage ready: ${rows.length} submission(s)`);
+    return;
+  }
+
+  await redis.ping();
+
+  let fileRows = [];
+  try {
+    fileRows = loadFile(submissionsPath);
+  } catch (error) {
+    console.error("[db] Skipping import of local submissions.json:", error.message);
+  }
+  let imported = 0;
+  for (const row of fileRows) {
+    if (row && row.id !== undefined) {
+      imported += await redis.hsetnx(SUBMISSIONS_KEY, String(row.id), JSON.stringify(row));
+    }
+  }
+
+  const rows = await readAllRows();
+  const maxId = rows.reduce((max, r) => Math.max(max, Number(r.id) || 0), 0);
+  const current = Number(await redis.get(SUBMISSIONS_ID_KEY)) || 0;
+  if (current < maxId) await redis.set(SUBMISSIONS_ID_KEY, maxId);
+
+  const pending = rows.filter((r) => r.status === STATUS.PENDING).length;
+  console.log(
+    `[db] Redis storage ready: ${rows.length} submission(s), ${pending} pending` +
+      (imported ? `, imported ${imported} from local file` : "")
+  );
+}
+
 // ==================== EXPORTS ====================
 
 module.exports = {
+  STATUS,
+  VERDICTS,
+  storageBackend,
+  init,
   insertSubmission,
   getActiveSubmissionForUser,
   getAllSubmissions,

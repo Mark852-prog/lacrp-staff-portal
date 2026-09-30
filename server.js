@@ -23,11 +23,32 @@ if (missing.length) {
     `[warning] Missing env vars: ${missing.join(", ")}. Copy .env.example to .env and fill these in before going live.`
   );
 }
+// Not strictly required to boot, but without them submissions aren't
+// durable (Redis) or admins aren't pinged in Discord (webhook secret).
+const RECOMMENDED_ENV = ["QUIZ_WEBHOOK_SECRET", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"];
+const missingRecommended = RECOMMENDED_ENV.filter((k) => !process.env[k]);
+if (missingRecommended.length) {
+  console.warn(`[warning] Missing recommended env vars: ${missingRecommended.join(", ")}.`);
+}
+
+// The bot service that posts the "new quiz submission" message in Discord.
+const QUIZ_WEBHOOK_URL =
+  process.env.QUIZ_WEBHOOK_URL || "https://lacrp-bot.onrender.com/api/quiz-submission";
+const QUIZ_WEBHOOK_SECRET = (process.env.QUIZ_WEBHOOK_SECRET || "").trim();
 
 const app = express();
 app.set("trust proxy", 1);
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+// API responses are live data (e.g. the pending queue); never serve stale copies.
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+
+// Express 4 doesn't catch rejected promises from async handlers; without
+// this a storage error would crash the whole process.
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // Using express-session's built-in MemoryStore. That means everyone's
 // logged out if the server restarts, a non-issue for a small staff
@@ -135,43 +156,124 @@ app.get("/api/questions", requireTrainee, (req, res) => {
   }));
   res.json(sanitized);
 });
-app.post("/api/submit", requireTrainee, async (req, res) => {
-  const { answers } = req.body;
-  if (!answers || typeof answers !== "object") {
+function isPlainObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+app.post("/api/submit", requireTrainee, wrap(async (req, res) => {
+  const { answers, client_submission_id } = req.body || {};
+  const user = req.session.user;
+
+  if (!isPlainObject(answers)) {
     return res.status(400).json({ error: "Missing answers" });
   }
-  const existing = db.getActiveSubmissionForUser(req.session.user.id);
-  if (existing) {
-    return res.status(409).json({ error: "You've already submitted this quiz." });
+  const knownIds = new Set(questions.map((q) => q.id));
+  const answered = Object.entries(answers).filter(
+    ([id, a]) => knownIds.has(id) && isPlainObject(a) && typeof a.value === "string" && a.value.trim()
+  );
+  if (answered.length === 0) {
+    return res.status(400).json({ error: "No answers were included in the submission." });
   }
-  const submission = db.insertSubmission({
-    discord_id: req.session.user.id,
-    username: req.session.user.username,
-    rank: req.session.user.rank,
-    answers,
+  if (client_submission_id !== undefined && !/^[A-Za-z0-9-]{8,64}$/.test(String(client_submission_id))) {
+    return res.status(400).json({ error: "Invalid submission reference." });
+  }
+  if (answered.length < knownIds.size) {
+    console.warn(`[submit] user=${user.id} answered ${answered.length}/${knownIds.size} questions`);
+  }
+
+  let outcome;
+  try {
+    outcome = await db.insertSubmission({
+      discord_id: user.id,
+      username: user.username,
+      rank: user.rank,
+      answers,
+      client_submission_id,
+    });
+  } catch (error) {
+    console.error(`[submit] FAILED to save submission for user=${user.id} ref=${client_submission_id || "-"}:`, error.message);
+    return res.status(500).json({
+      error: "Your quiz could not be saved. Please try again in a moment; your answers are still on this page.",
+    });
+  }
+
+  const { result, row } = outcome;
+  if (result === "already_active") {
+    console.log(`[submit] user=${user.id} blocked: active submission #${row.id} (${row.status})`);
+    return res.status(409).json({ error: "You've already submitted this quiz.", id: row.id });
+  }
+  if (result === "duplicate") {
+    console.log(`[submit] user=${user.id} retried ref=${client_submission_id}; already saved as #${row.id}`);
+    return res.json({ ok: true, id: row.id, attempt_number: row.attempt_number, duplicate: true });
+  }
+
+  console.log(
+    `[submit] saved submission #${row.id} user=${user.id} attempt=${row.attempt_number} status=${row.status} ref=${client_submission_id || "-"}`
+  );
+  // The submission is durably stored; tell the user now. The Discord ping is
+  // a best-effort side effect and must not decide whether this succeeded.
+  res.json({ ok: true, id: row.id, attempt_number: row.attempt_number });
+
+  notifyBot(row).catch((error) => console.error(`[notify] #${row.id} unexpected error:`, error.message));
+}));
+
+// Posts the "new submission" alert via the bot, retrying through bot cold
+// starts / reconnects. The bot de-duplicates by submission id.
+const NOTIFY_RETRY_DELAYS_MS = [0, 5000, 30000, 90000];
+async function notifyBot(row) {
+  if (!QUIZ_WEBHOOK_SECRET) {
+    console.error(`[notify] #${row.id} not sent: QUIZ_WEBHOOK_SECRET is not set on the portal`);
+    return false;
+  }
+  const payload = JSON.stringify({
+    id: row.id,
+    discord_id: row.discord_id,
+    username: row.username,
+    rank: row.rank,
+    attempt_number: row.attempt_number,
+    submitted_at: row.submitted_at,
   });
 
-console.log("QUIZ SUBMISSION CREATED:", submission);
-
-try {
-  const response = await fetch("https://lacrp-bot.onrender.com/api/quiz-submission", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.QUIZ_WEBHOOK_SECRET}`,
-    },
-    body: JSON.stringify(submission),
-  });
-
-  console.log("BOT RESPONSE:", response.status, await response.text());
-} catch (error) {
-  console.error("Failed to notify Discord bot:", error);
+  for (let i = 0; i < NOTIFY_RETRY_DELAYS_MS.length; i++) {
+    if (NOTIFY_RETRY_DELAYS_MS[i]) await new Promise((r) => setTimeout(r, NOTIFY_RETRY_DELAYS_MS[i]));
+    const attempt = `attempt ${i + 1}/${NOTIFY_RETRY_DELAYS_MS.length}`;
+    try {
+      const response = await fetch(QUIZ_WEBHOOK_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${QUIZ_WEBHOOK_SECRET}`,
+        },
+        body: payload,
+        signal: AbortSignal.timeout(20000),
+      });
+      const text = (await response.text()).slice(0, 200);
+      if (response.ok) {
+        console.log(`[notify] #${row.id} delivered to bot (${response.status}, ${attempt})`);
+        return true;
+      }
+      console.error(`[notify] #${row.id} bot responded ${response.status} (${attempt}): ${text}`);
+      if (response.status === 401) {
+        console.error("[notify] QUIZ_WEBHOOK_SECRET differs between the portal and the bot service.");
+        return false;
+      }
+      if (response.status === 400) return false;
+    } catch (error) {
+      console.error(`[notify] #${row.id} request failed (${attempt}): ${error.name}: ${error.message}`);
+    }
+  }
+  console.error(`[notify] #${row.id} gave up; the submission is saved and visible in Pending Submissions.`);
+  return false;
 }
-res.json({ ok: true });
-});
 
-app.get("/api/my-submissions", requireAuth, (req, res) => {
-  const rows = db.getSubmissionsByDiscordId(req.session.user.id).map((r) => ({
+// Lets you confirm after a deploy which storage backend is live.
+app.get("/api/health", wrap(async (req, res) => {
+  const stats = await db.getStats();
+  res.json({ ok: true, storage: db.storageBackend, pending: stats.pending, uptime_s: Math.round(process.uptime()) });
+}));
+
+app.get("/api/my-submissions", requireAuth, wrap(async (req, res) => {
+  const rows = (await db.getSubmissionsByDiscordId(req.session.user.id)).map((r) => ({
     id: r.id,
     status: r.status,
     verdict: r.verdict,
@@ -181,7 +283,7 @@ app.get("/api/my-submissions", requireAuth, (req, res) => {
     reviewed_at: r.reviewed_at,
   }));
   res.json(rows);
-});
+}));
 
 // ---------------- Admin-only ----------------
 
@@ -200,9 +302,9 @@ function mergeAnswers(row) {
   }));
 }
 
-app.get("/api/admin/submissions", requireAdmin, (req, res) => {
+app.get("/api/admin/submissions", requireAdmin, wrap(async (req, res) => {
   const { status } = req.query;
-  const rows = db.getAllSubmissions({ status }).map((r) => ({
+  const rows = (await db.getAllSubmissions({ status })).map((r) => ({
     id: r.id,
     discord_id: r.discord_id,
     username: r.username,
@@ -213,34 +315,42 @@ app.get("/api/admin/submissions", requireAdmin, (req, res) => {
     reviewed_at: r.reviewed_at,
   }));
   res.json(rows);
-});
+}));
 
-app.get("/api/admin/submissions/:id", requireAdmin, (req, res) => {
-  const row = db.getSubmissionById(req.params.id);
+app.get("/api/admin/submissions/:id", requireAdmin, wrap(async (req, res) => {
+  const row = await db.getSubmissionById(req.params.id);
   if (!row) return res.status(404).json({ error: "Not found" });
   res.json({ ...row, answers: mergeAnswers(row) });
-});
+}));
 
-app.post("/api/admin/submissions/:id/review", requireAdmin, (req, res) => {
-  const { verdict, notes } = req.body;
-  const updated = db.reviewSubmission(req.params.id, {
+// A review without a verdict used to move the attempt out of Pending with
+// no result, leaving the candidate unable to retake.
+function badVerdict(verdict) {
+  return !db.VERDICTS.includes(verdict);
+}
+
+app.post("/api/admin/submissions/:id/review", requireAdmin, wrap(async (req, res) => {
+  const { verdict, notes } = req.body || {};
+  if (badVerdict(verdict)) return res.status(400).json({ error: "Pick Pass or Needs retake before saving." });
+  const updated = await db.reviewSubmission(req.params.id, {
     verdict,
     notes,
     reviewer_id: req.session.user.id,
     reviewer_name: req.session.user.username,
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
+  console.log(`[review] #${updated.id} marked ${verdict} by ${req.session.user.id}`);
   res.json({ ok: true });
-});
+}));
 
 // ---------------- Senior High Rank only ----------------
 // Everything here requires isSenior, a tier above regular Admin. See
 // roles.config.js: seniorRoleIds.
 
 // All quiz activity, every status, searchable by username.
-app.get("/api/senior/submissions", requireSenior, (req, res) => {
+app.get("/api/senior/submissions", requireSenior, wrap(async (req, res) => {
   const { status, q } = req.query;
-  const rows = db.getAllSubmissions({ status, q }).map((r) => ({
+  const rows = (await db.getAllSubmissions({ status, q })).map((r) => ({
     id: r.id,
     discord_id: r.discord_id,
     username: r.username,
@@ -254,18 +364,18 @@ app.get("/api/senior/submissions", requireSenior, (req, res) => {
     reviewed_at: r.reviewed_at,
   }));
   res.json(rows);
-});
+}));
 
-app.get("/api/senior/submissions/:id", requireSenior, (req, res) => {
-  const row = db.getSubmissionById(req.params.id);
+app.get("/api/senior/submissions/:id", requireSenior, wrap(async (req, res) => {
+  const row = await db.getSubmissionById(req.params.id);
   if (!row) return res.status(404).json({ error: "Not found" });
   res.json({ ...row, answers: mergeAnswers(row) });
-});
+}));
 
 // A candidate's complete attempt history, oldest to newest, plus which
 // one (if any) is currently the active/counted attempt.
-app.get("/api/senior/candidates/:discordId", requireSenior, (req, res) => {
-  const rows = db.getSubmissionsByDiscordId(req.params.discordId);
+app.get("/api/senior/candidates/:discordId", requireSenior, wrap(async (req, res) => {
+  const rows = await db.getSubmissionsByDiscordId(req.params.discordId);
   if (rows.length === 0) return res.status(404).json({ error: "No submissions from this candidate" });
   res.json({
     discord_id: req.params.discordId,
@@ -283,11 +393,12 @@ app.get("/api/senior/candidates/:discordId", requireSenior, (req, res) => {
       reviewed_at: r.reviewed_at,
     })),
   });
-});
+}));
 
-app.post("/api/senior/submissions/:id/review", requireSenior, (req, res) => {
-  const { verdict, notes } = req.body;
-  const updated = db.reviewSubmission(req.params.id, {
+app.post("/api/senior/submissions/:id/review", requireSenior, wrap(async (req, res) => {
+  const { verdict, notes } = req.body || {};
+  if (badVerdict(verdict)) return res.status(400).json({ error: "Pick Pass or Needs retake before saving." });
+  const updated = await db.reviewSubmission(req.params.id, {
     verdict,
     notes,
     reviewer_id: req.session.user.id,
@@ -295,14 +406,15 @@ app.post("/api/senior/submissions/:id/review", requireSenior, (req, res) => {
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
   res.json({ ok: true });
-});
+}));
 
-app.post("/api/senior/submissions/:id/override", requireSenior, (req, res) => {
-  const { verdict, notes, reason } = req.body;
-  if (!reason || !reason.trim()) {
+app.post("/api/senior/submissions/:id/override", requireSenior, wrap(async (req, res) => {
+  const { verdict, notes, reason } = req.body || {};
+  if (!reason || !String(reason).trim()) {
     return res.status(400).json({ error: "A reason is required to override a result." });
   }
-  const updated = db.overrideSubmission(req.params.id, {
+  if (badVerdict(verdict)) return res.status(400).json({ error: "Pick Pass or Needs retake for the override." });
+  const updated = await db.overrideSubmission(req.params.id, {
     verdict,
     notes,
     reason,
@@ -310,22 +422,25 @@ app.post("/api/senior/submissions/:id/override", requireSenior, (req, res) => {
     by_name: req.session.user.username,
   });
   if (!updated) return res.status(404).json({ error: "Not found" });
+  console.log(`[override] #${updated.id} set to ${verdict} by ${req.session.user.id}`);
   res.json({ ok: true });
-});
+}));
 
-app.get("/api/senior/audit", requireSenior, async (req, res) => {
-const { action, actor_id, target_id, q, limit } = req.query;
+app.get("/api/senior/audit", requireSenior, wrap(async (req, res) => {
+  const { action, actor_id, target_id, q, limit } = req.query;
   const rows = await db.getAuditLog({ action, actor_id, target_id, q, limit: limit ? Number(limit) : 200 });
   res.json(rows);
-});
+}));
 
-app.get("/api/senior/export", requireSenior, async (req, res) => {
-res.json(db.getStats());
-});
+// The dashboard's stats row calls /api/senior/stats; this was previously
+// registered as a second /api/senior/export, which also hid the CSV export.
+app.get("/api/senior/stats", requireSenior, wrap(async (req, res) => {
+  res.json(await db.getStats());
+}));
 
 // Simple CSV export for either submissions or the audit log, since
 // management asked to be able to export records for documentation.
-app.get("/api/senior/export", requireSenior, async (req, res) => {
+app.get("/api/senior/export", requireSenior, wrap(async (req, res) => {
   const { type } = req.query;
   let rows, filename, headers;
 
@@ -334,7 +449,7 @@ app.get("/api/senior/export", requireSenior, async (req, res) => {
     headers = ["id", "at", "action", "actor_name", "actor_id", "target_id", "details", "reason"];
     filename = "lacrp-audit-log.csv";
   } else {
-    rows = db.getAllSubmissions({});
+    rows = await db.getAllSubmissions({});
     headers = ["id", "username", "discord_id", "rank", "attempt_number", "status", "verdict", "reviewer_name", "submitted_at", "reviewed_at"];
     filename = "lacrp-submissions.csv";
   }
@@ -354,9 +469,29 @@ app.get("/api/senior/export", requireSenior, async (req, res) => {
     actor_name: req.session.user.username,
     details: `Exported ${rows.length} ${type === "audit" ? "audit log" : "submission"} rows`,
   });
+}));
+
+// Anything a route throws ends up here: log it and answer with JSON so the
+// browser shows a real error instead of hanging or pretending it worked.
+app.use((err, req, res, next) => {
+  console.error(`[error] ${req.method} ${req.path}:`, err && err.stack ? err.stack : err);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({ error: "Something went wrong on the server. Please try again." });
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] Unhandled promise rejection:", reason);
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`LACRP staff portal running on http://localhost:${PORT}`);
-});
+db.init()
+  .catch((error) => {
+    // Keep serving so logins work, but every storage call will surface this
+    // error to users/admins rather than failing silently.
+    console.error("[db] FATAL: storage initialisation failed:", error.message);
+  })
+  .finally(() => {
+    app.listen(PORT, () => {
+      console.log(`LACRP staff portal running on http://localhost:${PORT} (storage: ${db.storageBackend})`);
+    });
+  });

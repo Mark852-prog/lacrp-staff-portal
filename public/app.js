@@ -16,6 +16,8 @@ let state = {
   candidateHistory: null,
   auditList: [],
   auditFilter: { action: "", q: "" },
+  clientSubmissionId: null,
+  lastSubmission: null,
 };
 
 const app = document.getElementById("app");
@@ -54,6 +56,37 @@ async function api(path, opts = {}) {
     throw new Error(body.error || `Request failed (${res.status})`);
   }
   return res.json();
+}
+
+/* ============== QUIZ DRAFT ============== */
+// In-progress answers are kept on this device so a session expiry, server
+// restart or failed submit never throws away a finished quiz. The draft's
+// id doubles as an idempotency key so retrying a submit can't double-save.
+function draftKey() {
+  return `lacrp:quiz-draft:${state.user ? state.user.id : "anon"}`;
+}
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem(draftKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveDraft() {
+  try {
+    localStorage.setItem(draftKey(), JSON.stringify({
+      answers: state.answers,
+      qi: state.qi,
+      clientSubmissionId: state.clientSubmissionId,
+      savedAt: new Date().toISOString(),
+    }));
+  } catch {}
+}
+function clearDraft() {
+  try { localStorage.removeItem(draftKey()); } catch {}
+}
+function newSubmissionId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 /* ============== INIT ============== */
@@ -142,7 +175,9 @@ async function refreshPendingBadge() {
       badge.style.display = "inline-block";
       badge.textContent = rows.length;
     }
-  } catch {}
+  } catch (err) {
+    console.error("Couldn't refresh pending count:", err.message);
+  }
 }
 
 /* ============== DASHBOARD ============== */
@@ -151,6 +186,8 @@ async function renderDashboard() {
   try { mySubs = await api("/api/my-submissions"); } catch {}
   const latest = mySubs[0];
   const total = 22; // matches question bank count
+  const draft = loadDraft();
+  const startLabel = draft && Object.keys(draft.answers || {}).length ? "Resume quiz" : "Start quiz";
 
   // Build the right-hand activity panel based on who's looking.
   let activityHTML = "";
@@ -177,11 +214,14 @@ async function renderDashboard() {
     `;
   } else if (state.user.isAdmin) {
     let pending = [];
-    try { pending = await api("/api/admin/submissions?status=pending"); } catch {}
+    let pendingError = null;
+    try { pending = await api("/api/admin/submissions?status=pending"); } catch (err) { pendingError = err.message; }
     activityHTML = `
       <div class="side-panel">
         <h3>${icon.inbox}Needs your review</h3>
-        ${pending.length === 0
+        ${pendingError
+          ? `<div class="empty-state small">Couldn't load pending submissions: ${escapeHTML(pendingError)}</div>`
+          : pending.length === 0
           ? `<div class="empty-state small">Nothing pending right now.</div>`
           : pending.slice(0, 6).map((s) => `
             <div class="activity-item">
@@ -261,9 +301,9 @@ async function renderDashboard() {
                         if (latest.status === "pending") return `<span class="status-pill"><span class="dot"></span>Awaiting review</span>`;
                         if (latest.verdict === "pass") return `<span class="status-pill pass"><span class="dot"></span>Passed</span>`;
                         if (latest.verdict === "fail" && latest.active !== false) return `<span class="status-pill fail"><span class="dot"></span>Needs retake, contact an Admin</span>`;
-                        if (latest.active === false) return `<button class="btn-start" id="startBtn">Start quiz</button>`; return `<span class="status-pill done"><span class="dot"></span>Reviewed</span>`;
+                        if (latest.active === false) return `<button class="btn-start" id="startBtn">${startLabel}</button>`; return `<span class="status-pill done"><span class="dot"></span>Reviewed</span>`;
                       })()
-                    : `<button class="btn-start" id="startBtn">Start quiz</button>`
+                    : `<button class="btn-start" id="startBtn">${startLabel}</button>`
                 }
               </div>
             </div>
@@ -285,9 +325,17 @@ async function renderDashboard() {
   const startBtn = document.getElementById("startBtn");
   if (startBtn) {
     startBtn.onclick = async () => {
-      state.questions = await api("/api/questions");
-      state.answers = {};
-      state.qi = 0;
+      try {
+        state.questions = await api("/api/questions");
+      } catch (err) {
+        alert(`Couldn't load the quiz: ${err.message}`);
+        return;
+      }
+      const saved = loadDraft();
+      state.answers = (saved && saved.answers) || {};
+      state.qi = saved && saved.qi < state.questions.length ? saved.qi : 0;
+      state.clientSubmissionId = (saved && saved.clientSubmissionId) || newSubmissionId();
+      saveDraft();
       state.view = "quiz";
       render();
     };
@@ -379,6 +427,7 @@ function renderQuiz() {
         answerArea.querySelectorAll(".mc-opt").forEach((b) => b.classList.remove("selected"));
         btn.classList.add("selected");
         state.answers[q.id] = { value: q.options[+btn.dataset.i], optionIndex: +btn.dataset.i };
+        saveDraft();
         refreshNextState();
       };
     });
@@ -390,6 +439,7 @@ function renderQuiz() {
     const ta = document.getElementById("scenarioInput");
     ta.addEventListener("input", () => {
       state.answers[q.id] = { value: ta.value };
+      saveDraft();
       refreshNextState();
     });
   }
@@ -398,6 +448,7 @@ function renderQuiz() {
   nextBtn.onclick = () => {
     if (state.qi < state.questions.length - 1) {
       state.qi++;
+      saveDraft();
       render();
     } else {
       state.view = "review";
@@ -442,6 +493,7 @@ function renderReview() {
             })
             .join("")}
         </div>
+        <div id="submitError" class="splash-error" style="display:none; margin-top:18px;"></div>
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:22px;">
           <button class="btn-ghost" id="backToQuizBtn">Back to quiz</button>
           <button class="btn-start" id="submitBtn">Submit for review</button>
@@ -462,10 +514,37 @@ function renderReview() {
     state.view = "quiz";
     render();
   };
-  document.getElementById("submitBtn").onclick = async () => {
-    await api("/api/submit", { method: "POST", body: JSON.stringify({ answers: state.answers }) });
-    state.view = "submitted";
-    render();
+  document.getElementById("submitBtn").onclick = async (e) => {
+    const btn = e.currentTarget;
+    const errorBox = document.getElementById("submitError");
+    btn.disabled = true;
+    btn.textContent = "Submitting…";
+    errorBox.style.display = "none";
+    if (!state.clientSubmissionId) state.clientSubmissionId = newSubmissionId();
+    saveDraft();
+    try {
+      // Only show "Submitted" once the server confirms the attempt is saved.
+      const result = await api("/api/submit", {
+        method: "POST",
+        body: JSON.stringify({ answers: state.answers, client_submission_id: state.clientSubmissionId }),
+      });
+      clearDraft();
+      state.lastSubmission = result;
+      state.clientSubmissionId = null;
+      state.view = "submitted";
+      render();
+    } catch (err) {
+      if (err.message === "Not signed in") {
+        // api() already switched to the sign-in screen; the draft is kept.
+        state.loginError = "Your session expired before the quiz was submitted. Your answers are saved on this device: sign in, open the quiz and submit again.";
+        render();
+        return;
+      }
+      btn.disabled = false;
+      btn.textContent = "Submit for review";
+      errorBox.textContent = `Your quiz was NOT submitted: ${err.message}`;
+      errorBox.style.display = "block";
+    }
   };
 }
 
@@ -481,6 +560,7 @@ function renderSubmitted() {
           <p style="color:var(--text-dim); font-size:14.5px; line-height:1.55; max-width:420px;">
             Your answers have gone to the Administration team. Nothing here is auto-graded, a real person will mark this and follow up with you directly.
           </p>
+          ${state.lastSubmission && state.lastSubmission.id ? `<p style="color:var(--text-dim); font-size:13px;">Submission reference #${state.lastSubmission.id}</p>` : ""}
           <button class="btn-start" id="doneBtn" style="margin-top:24px;">Back to dashboard</button>
         </div>
       </div>
@@ -495,7 +575,14 @@ function renderSubmitted() {
 
 /* ============== ADMIN: LIST ============== */
 async function renderAdminList() {
-  state.adminList = await api(`/api/admin/submissions?status=${state.adminFilter}`);
+  let listError = null;
+  try {
+    state.adminList = await api(`/api/admin/submissions?status=${state.adminFilter}`);
+  } catch (err) {
+    if (err.message === "Not signed in") return;
+    listError = err.message;
+    state.adminList = [];
+  }
 
   app.innerHTML = `
     <div class="shell">
@@ -510,10 +597,13 @@ async function renderAdminList() {
         <div style="display:flex; gap:8px; margin-bottom:18px;">
           <button class="btn-ghost" data-filter="pending" style="${state.adminFilter === "pending" ? "border-color:var(--amber); color:var(--amber);" : ""}">Pending</button>
           <button class="btn-ghost" data-filter="reviewed" style="${state.adminFilter === "reviewed" ? "border-color:var(--amber); color:var(--amber);" : ""}">Reviewed</button>
+          <button class="btn-ghost" id="refreshListBtn" style="margin-left:auto;">Refresh</button>
         </div>
         <div class="card">
           ${
-            state.adminList.length === 0
+            listError
+              ? `<div class="empty-state">Couldn't load submissions: ${escapeHTML(listError)}</div>`
+              : state.adminList.length === 0
               ? `<div class="empty-state">Nothing here right now.</div>`
               : state.adminList
                   .map(
@@ -545,9 +635,15 @@ async function renderAdminList() {
       renderAdminList();
     };
   });
+  document.getElementById("refreshListBtn").onclick = () => renderAdminList();
   document.querySelectorAll("[data-open]").forEach((b) => {
     b.onclick = async () => {
-      state.adminDetail = await api(`/api/admin/submissions/${b.dataset.open}`);
+      try {
+        state.adminDetail = await api(`/api/admin/submissions/${b.dataset.open}`);
+      } catch (err) {
+        alert(`Couldn't open submission: ${err.message}`);
+        return;
+      }
       state.view = "adminDetail";
       render();
     };
@@ -618,10 +714,21 @@ function renderAdminDetail() {
   };
   document.getElementById("saveReviewBtn").onclick = async (e) => {
     const notes = document.getElementById("notesInput").value;
-    await api(`/api/admin/submissions/${s.id}/review`, {
-      method: "POST",
-      body: JSON.stringify({ verdict: pickedVerdict, notes }),
-    });
+    if (!pickedVerdict) {
+      alert("Pick Pass or Needs retake before saving.");
+      return;
+    }
+    e.target.disabled = true;
+    try {
+      await api(`/api/admin/submissions/${s.id}/review`, {
+        method: "POST",
+        body: JSON.stringify({ verdict: pickedVerdict, notes }),
+      });
+    } catch (err) {
+      e.target.disabled = false;
+      alert(`Review was not saved: ${err.message}`);
+      return;
+    }
     e.target.textContent = "Saved ✓";
     setTimeout(() => {
       state.view = "admin";
@@ -912,6 +1019,10 @@ async function renderAuditLog() {
     state.auditFilter.action = e.target.value;
     renderAuditLog();
   };
+}
+
+function escapeHTML(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 /* ============== ROUTER ============== */
