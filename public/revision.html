@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LACRP Trainee Revision Sheet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: one reading column like a briefing packet, tabbed "cards" of reference data, self-check at the end */
+:root {
+  --bg: #f3f5f8;
+  --panel: #ffffff;
+  --ink: #16202e;
+  --muted: #5a6677;
+  --line: #d8dee7;
+  --accent: #1f4e8c;
+  --accent-soft: #e3ebf6;
+  --warn: #9a5b00;
+  --warn-soft: #fbefd9;
+  --bad: #a3242a;
+  --bad-soft: #f8e1e2;
+  --good: #1f6b3a;
+  --good-soft: #dff1e5;
+  --f-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f141c; --panel: #171e29; --ink: #e6ebf2; --muted: #9aa6b6; --line: #2a3443;
+  --accent: #7fa8e0; --accent-soft: #1c2a40; --warn: #f0b760; --warn-soft: #33270f;
+  --bad: #f08a8f; --bad-soft: #3a1a1d; --good: #7fd49a; --good-soft: #15301f; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0f141c; --panel: #171e29; --ink: #e6ebf2; --muted: #9aa6b6; --line: #2a3443;
+  --accent: #7fa8e0; --accent-soft: #1c2a40; --warn: #f0b760; --warn-soft: #33270f;
+  --bad: #f08a8f; --bad-soft: #3a1a1d; --good: #7fd49a; --good-soft: #15301f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 16px/1.55 var(--f-body); }
+.wrap { max-width: 880px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: grid; gap: 36px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.1; }
+h1 { font-size: clamp(2rem, 6vw, 2.9rem); letter-spacing: .01em; }
+h2 { font-size: 1.7rem; display: flex; align-items: baseline; gap: 10px; }
+h2 .sec { font-size: .95rem; color: var(--accent); letter-spacing: .12em; text-transform: uppercase; }
+h3 { font-size: 1.2rem; }
+p { margin: 0; }
+.eyebrow { font: 700 .78rem/1 var(--f-body); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+header { display: grid; gap: 12px; }
+header p { color: var(--muted); max-width: 62ch; }
+section { display: grid; gap: 16px; }
+.lead { color: var(--muted); max-width: 65ch; }
+code, .cmd { font-family: var(--f-mono); font-size: .88em; background: var(--accent-soft); color: var(--accent); padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 8px; }
+nav.toc a { font-weight: 600; font-size: .9rem; color: var(--ink); text-decoration: none; border: 1px solid var(--line); background: var(--panel); padding: 6px 12px; border-radius: 999px; }
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+
+/* key numbers */
+.nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.num { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 4px; align-content: start; }
+.num b { font: 700 2rem/1 var(--f-display); color: var(--accent); font-variant-numeric: tabular-nums; }
+.num span { font-size: .9rem; color: var(--muted); }
+
+/* tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: .95rem; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 700 .75rem/1.2 var(--f-body); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 600; }
+.pill { display: inline-block; font-weight: 700; font-size: .8rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.p-verbal { background: var(--good-soft); color: var(--good); }
+.p-written { background: var(--accent-soft); color: var(--accent); }
+.p-kick { background: var(--warn-soft); color: var(--warn); }
+.p-ban { background: var(--bad-soft); color: var(--bad); }
+.tier-row td { background: var(--bg); font: 700 .8rem/1.2 var(--f-body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+/* procedure blocks */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.box ul, .box ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.must { border-left: 4px solid var(--bad); padding: 8px 12px; background: var(--bad-soft); border-radius: 0 6px 6px 0; font-weight: 600; }
+.quote { font-style: italic; border-left: 3px solid var(--accent); padding-left: 12px; color: var(--ink); }
+
+/* traps */
+.traps { display: grid; gap: 10px; }
+.trap { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.trap > div { padding: 12px 14px; min-width: 0; }
+.trap .wrong { background: var(--bad-soft); }
+.trap .right { background: var(--good-soft); }
+.trap small { display: block; font: 700 .72rem/1 var(--f-body); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px; }
+.trap .wrong small { color: var(--bad); }
+.trap .right small { color: var(--good); }
+@media (max-width: 560px) { .trap { grid-template-columns: 1fr; } }
+
+/* self-check */
+.score { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; }
+.score b { font: 700 1.4rem/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.score .spacer { flex: 1; }
+button { font: 600 .9rem var(--f-body); cursor: pointer; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 12px; }
+button:hover { border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.q { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+.q .qt { font-weight: 600; }
+.q .qn { color: var(--muted); font-weight: 700; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.opts button { text-align: left; }
+.opts button.correct { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+.opts button.wrong { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.opts button:disabled { cursor: default; }
+.why { font-size: .93rem; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 10px; }
+.card-ans { background: var(--bg); border-radius: 6px; padding: 12px; }
+.selfmark { display: flex; gap: 8px; flex-wrap: wrap; }
+.selfmark .got { color: var(--good); }
+.selfmark .miss { color: var(--bad); }
+.selfmark button[aria-pressed="true"].got { background: var(--good-soft); border-color: var(--good); }
+.selfmark button[aria-pressed="true"].miss { background: var(--bad-soft); border-color: var(--bad); }
+footer { color: var(--muted); font-size: .9rem; border-top: 1px solid var(--line); padding-top: 16px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">LACRP Staff Team · Pre-quiz study</span>
+    <h1>Trainee Revision Sheet</h1>
+    <p>Everything you need from the Staff Operational Handbook before you sit the quiz on the staff portal. Read sections 1 to 4, then test yourself in section 5. If anything here ever disagrees with the handbook, the handbook wins.</p>
+    <nav class="toc" aria-label="Sections">
+      <a href="#numbers">Key numbers</a>
+      <a href="#punishments">Punishment guide</a>
+      <a href="#commands">Commands</a>
+      <a href="#procedures">Procedures</a>
+      <a href="#traps">Common mistakes</a>
+      <a href="#check">Self-check</a>
+    </nav>
+  </header>
+
+  <section id="numbers">
+    <h2><span class="sec">1</span> Numbers to memorise</h2>
+    <div class="nums">
+      <div class="num"><b>600s</b><span>Max Peace Timer or Priority Timer (10 minutes) at one time</span></div>
+      <div class="num"><b>3+</b><span>Independent, non-biased witnesses for witness evidence to count</span></div>
+      <div class="num"><b>3 hrs</b><span>Two kickable offenses in this window push the third toward a temp ban</span></div>
+      <div class="num"><b>1 week</b><span>Temp ban for rejoining after a kick (1st offense)</span></div>
+      <div class="num"><b>2 weeks</b><span>Temp ban for Staff RDM (1st offense). 2nd offense is permanent</span></div>
+    </div>
+  </section>
+
+  <section id="punishments">
+    <h2><span class="sec">2</span> Punishment guide</h2>
+    <p class="lead">The quiz asks what the <strong>first offense</strong> punishment is. Learn where each offense starts. Most in-game offenses start at a Written Warning, but a few start lower or much higher.</p>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Offense</th><th>1st offense</th><th>After that</th></tr></thead>
+        <tbody>
+          <tr class="tier-row"><td colspan="3">Starts low</td></tr>
+          <tr><td>RPing without staff-approved permission</td><td><span class="pill p-verbal">Verbal Warning</span></td><td>One of the few that starts at Verbal, not Written</td></tr>
+          <tr><td>RDM (Random Deathmatch)</td><td><span class="pill p-written">Written Warning</span></td><td>Escalates up to a 1-week temp ban by the 4th offense</td></tr>
+          <tr><td>VDM (Vehicle Deathmatch)</td><td><span class="pill p-written">Written Warning</span></td><td>Same ladder as RDM</td></tr>
+          <tr><td>Meta Gaming</td><td><span class="pill p-written">Written Warning</span></td><td>Same ladder as RDM</td></tr>
+          <tr class="tier-row"><td colspan="3">Starts at a kick</td></tr>
+          <tr><td>Unauthorized Default Livery on patrol</td><td><span class="pill p-kick">15 Minute Kick</span></td><td>Reaches a temp ban by the 3rd/4th offense</td></tr>
+          <tr><td>Trolling</td><td><span class="pill p-kick">Extended Kick</span></td><td>Skips warnings entirely</td></tr>
+          <tr class="tier-row"><td colspan="3">Starts at a ban</td></tr>
+          <tr><td>Rejoining right after a kick</td><td><span class="pill p-ban">Temp Ban (1 week)</span></td><td>&nbsp;</td></tr>
+          <tr><td>Staff RDM</td><td><span class="pill p-ban">Temp Ban (2 weeks)</span></td><td>Permanent Ban on the 2nd. Staff are judged more harshly than players</td></tr>
+          <tr class="tier-row"><td colspan="3">Instant permanent ban, no warnings</td></tr>
+          <tr><td>Running a Banned Roleplay</td><td><span class="pill p-ban">Permanent Ban</span></td><td>Strictly banned, no excuses accepted</td></tr>
+          <tr><td>Racism / racial slurs</td><td><span class="pill p-ban">Permanent Ban</span></td><td>Server Safety Disruption</td></tr>
+          <tr><td>Exploiting</td><td><span class="pill p-ban">Permanent Ban</span></td><td>Same tier as racism</td></tr>
+          <tr><td>Breaking Roblox ToS</td><td><span class="pill p-ban">Permanent Ban</span></td><td>Same tier as racism</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="box">
+      <h3>Before you punish anyone</h3>
+      <p>Always run <code>/player search</code> first to check their punishment history. If they already have <strong>two kickable offenses within 3 hours</strong>, the next one escalates toward a temp ban. It does not go back to a warning.</p>
+    </div>
+  </section>
+
+  <section id="commands">
+    <h2><span class="sec">3</span> Commands and who can use them</h2>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Command</th><th>What it does</th><th>Rules</th></tr></thead>
+        <tbody>
+          <tr><td><code>:pt [time]</code></td><td>Peace Timer. Pauses <strong>all</strong> criminal activity (robberies etc.)</td><td>Max 600 seconds. Example: <code>:pt 300</code>. Must be announced (wording below)</td></tr>
+          <tr><td><code>:prty [time]</code></td><td>Priority Timer. Cuts back disruptive behaviour but does <strong>not</strong> pause criminal activity</td><td>Max 600 seconds</td></tr>
+          <tr><td><code>/roleplay log</code></td><td>Logs an approved roleplay scene</td><td>Every approved RP must be logged. Include players involved, location and duration</td></tr>
+          <tr><td><code>/ban-request</code></td><td>Sends a ban for Administrator review</td><td>How Moderators get a ban. Attach clear evidence</td></tr>
+          <tr><td><code>/request staff</code></td><td>Calls for backup</td><td>Use when calls are piling up and you're short-staffed</td></tr>
+          <tr><td><code>/player search</code></td><td>Shows a player's punishment history</td><td>Check before punishing, especially repeat offenders</td></tr>
+          <tr><td><code>:mod</code> / <code>:unmod</code></td><td>Gives or removes mod</td><td>Trial Administrator+ only, and only during trainings. Trial Internal Affairs+ may also <code>:unmod</code> when processing terminations</td></tr>
+          <tr><td><code>:bring</code> / <code>:to</code></td><td>Teleports a player to you / you to a player</td><td>Off duty: only Internal Affairs (Trial IA+) investigating staff misconduct. A regular Moderator using them off duty is misuse</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="box">
+      <h3>Peace Timer announcement</h3>
+      <p class="quote">"A peace timer has been set. All criminal activity such as robberies is paused."</p>
+    </div>
+  </section>
+
+  <section id="procedures">
+    <h2><span class="sec">4</span> Procedures</h2>
+    <div class="grid2">
+      <div class="box">
+        <h3>Hostage / Kidnapping RP permission</h3>
+        <p>Check <strong>both</strong> of these before approving:</p>
+        <ul>
+          <li>A good backstory and a sensible scenario</li>
+          <li>An Administrator is available to supervise the scene</li>
+        </ul>
+        <p class="must">Deny (for now) if you're the only staff on duty or calls are high. A good backstory alone is never enough.</p>
+      </div>
+      <div class="box">
+        <h3>Getting a player banned (as a Moderator)</h3>
+        <ol>
+          <li>Collect clear evidence</li>
+          <li>Submit a <code>/ban-request</code></li>
+          <li>An Administrator reviews it and approves or denies</li>
+        </ol>
+        <p>Moderators cannot ban directly. Witness-only evidence needs <strong>3 or more</strong> independent witnesses with no friendship or conflict of interest between them.</p>
+      </div>
+      <div class="box">
+        <h3>Server overload playbook</h3>
+        <p>Flooded with mod calls, mass RDM/VDM, few staff online. In this order:</p>
+        <ol>
+          <li>Flag <strong>High Load</strong> status</li>
+          <li>Call backup with <code>/request staff</code></li>
+          <li>Set a Peace Timer (<code>:pt</code>, max 600) and post the announcement</li>
+        </ol>
+        <p>If it's disruptive behaviour rather than full criminal chaos, use the Priority Timer (<code>:prty</code>) instead.</p>
+      </div>
+      <div class="box">
+        <h3>Logging an approved roleplay</h3>
+        <p>Run <code>/roleplay log</code> with:</p>
+        <ul>
+          <li>Players involved</li>
+          <li>Location</li>
+          <li>Duration</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>A staff member misusing commands</h3>
+        <p>If you see another Moderator use <code>:to</code> or <code>:bring</code> off duty with no reason, <strong>report it to Internal Affairs or a Supervisor</strong>. Don't sort it out peer-to-peer.</p>
+      </div>
+      <div class="box">
+        <h3>A kicked player comes back and does it again</h3>
+        <ol>
+          <li>Check <code>/player search</code> for their history</li>
+          <li>Two kickable offenses within 3 hours means the next one escalates toward a temp ban</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="traps">
+    <h2><span class="sec">5</span> Common mistakes</h2>
+    <div class="traps">
+      <div class="trap"><div class="wrong"><small>Wrong</small>RDM first offense gets a Verbal Warning</div><div class="right"><small>Right</small>Written Warning. Verbal is only for RPing without permission</div></div>
+      <div class="trap"><div class="wrong"><small>Wrong</small>Trolling starts with a warning</div><div class="right"><small>Right</small>Straight to an Extended Kick</div></div>
+      <div class="trap"><div class="wrong"><small>Wrong</small>Peace Timer and Priority Timer are the same thing</div><div class="right"><small>Right</small>Peace pauses all criminal activity. Priority only reduces disruptive behaviour</div></div>
+      <div class="trap"><div class="wrong"><small>Wrong</small>Approve hostage RP if the backstory is good</div><div class="right"><small>Right</small>Also needs an Administrator free to supervise</div></div>
+      <div class="trap"><div class="wrong"><small>Wrong</small>A Moderator can ban if the evidence is strong</div><div class="right"><small>Right</small>Moderators submit <code>/ban-request</code>; an Administrator decides</div></div>
+      <div class="trap"><div class="wrong"><small>Wrong</small>Staff RDM is punished like normal RDM</div><div class="right"><small>Right</small>2-week temp ban first time, permanent the second</div></div>
+      <div class="trap"><div class="wrong"><small>Wrong</small>Racism or exploiting gets a temp ban first</div><div class="right"><small>Right</small>Instant Permanent Ban, no warnings</div></div>
+    </div>
+  </section>
+
+  <section id="check">
+    <h2><span class="sec">6</span> Self-check</h2>
+    <p class="lead">Multiple choice marks itself. For the written ones, say your answer out loud or write it down first, then reveal and be honest with yourself. In the real quiz, the written answers are marked by an admin, so explain your reasoning.</p>
+    <div class="score" aria-live="polite">
+      <span>Score</span><b id="score">0 / 0</b>
+      <span class="spacer"></span>
+      <button type="button" id="reset">Start again</button>
+    </div>
+    <div id="quiz" style="display:grid;gap:12px"></div>
+  </section>
+
+  <footer>
+    Made from the Staff Operational Handbook for LACRP trainees. Good luck on the quiz.
+  </footer>
+</div>
+
+<script>
+const MC = [
+  { q: "A player commits VDM for the first time. What's the punishment?", o: ["Verbal Warning", "Written Warning", "15 Minute Kick", "Extended Kick"], a: 1, why: "VDM is on the same ladder as RDM and Meta Gaming: Written Warning first." },
+  { q: "A player roleplays a scene without staff-approved permission (1st time).", o: ["Verbal Warning", "Written Warning", "Extended Kick", "Temporary Ban"], a: 0, why: "One of the few offenses that starts at a Verbal Warning." },
+  { q: "A player is found breaking Roblox ToS.", o: ["Extended Kick", "Temporary Ban (1 week)", "Temporary Ban (2 weeks)", "Permanent Ban"], a: 3, why: "Same tier as racism and exploiting: instant Permanent Ban." },
+  { q: "A staff member commits Staff RDM for the SECOND time.", o: ["Temporary Ban (2 weeks)", "Temporary Ban (1 week)", "Permanent Ban", "Written Warning"], a: 2, why: "Staff RDM is a 2-week ban first time, Permanent Ban on the 2nd." },
+  { q: "A player patrols using an unauthorized Default Livery (1st time).", o: ["Written Warning", "15 Minute Kick", "Extended Kick", "Temporary Ban"], a: 1, why: "Starts at a 15 Minute Kick." },
+  { q: "A player is caught trolling for the first time.", o: ["Verbal Warning", "Written Warning", "Extended Kick", "Permanent Ban"], a: 2, why: "Trolling skips warnings and goes straight to an Extended Kick." },
+  { q: "A kicked player instantly rejoins (1st time).", o: ["15 Minute Kick", "Extended Kick", "Temporary Ban (1 week)", "Permanent Ban"], a: 2, why: "Rejoining after a kick starts at a 1-week temp ban." },
+  { q: "What's the longest Peace Timer you can set in one go?", o: ["60 seconds", "300 seconds", "600 seconds", "1800 seconds"], a: 2, why: "600 seconds (10 minutes) for either the Peace or Priority Timer." },
+  { q: "Which command pauses ALL criminal activity?", o: [":prty", ":pt", ":bring", "/request staff"], a: 1, why: ":pt is the Peace Timer. :prty only reduces disruptive behaviour." },
+  { q: "How many witnesses are needed for witness-only evidence?", o: ["1", "2", "3 or more, independent", "Any number if they're staff"], a: 2, why: "Three or more independent witnesses with no friendship or conflict of interest." },
+];
+const CARDS = [
+  { q: "You're the only staff member on duty. A player asks for Kidnapping RP perms with a great backstory. What do you do?", a: "Deny it for now. As well as a good backstory, an Administrator must be available to supervise. That's a hard requirement." },
+  { q: "What three things go into a /roleplay log?", a: "The players involved, the location, and the duration." },
+  { q: "You're a Moderator and think someone deserves a ban. Walk through the process.", a: "Collect clear evidence, submit a /ban-request, and an Administrator reviews it and approves or denies. Moderators can't ban directly." },
+  { q: "Mod calls are flooding in, mass RDM/VDM, very few staff online. What are your steps?", a: "1) Flag High Load status. 2) /request staff for backup. 3) Set a Peace Timer (:pt, max 600s) and post: \"A peace timer has been set. All criminal activity such as robberies is paused.\" Use :prty instead if it's disruptive behaviour, not full criminal activity." },
+  { q: "Who can use :mod / :unmod, and when?", a: "Trial Administrators and above, only during trainings. Trial Internal Affairs and above may also use :unmod when processing terminations." },
+  { q: "Another Moderator uses :bring on a player while off duty with no reason. What do you do?", a: "It's not allowed. Off-duty :bring/:to is only for Internal Affairs investigating staff misconduct. Report it to Internal Affairs or a Supervisor." },
+  { q: "A player kicked for trolling rejoins later and trolls again. What do you check first and what's likely to happen?", a: "Check /player search for their history. Two kickable offenses within 3 hours means the next escalates toward a temp ban, not back to a warning." },
+];
+
+const quiz = document.getElementById("quiz");
+const scoreEl = document.getElementById("score");
+let state = {};
+
+function load() { try { state = JSON.parse(localStorage.getItem("lacrp-rev") || "{}"); } catch (e) { state = {}; } }
+function save() { try { localStorage.setItem("lacrp-rev", JSON.stringify(state)); } catch (e) {} }
+
+function updateScore() {
+  let got = 0, done = 0;
+  MC.forEach((m, i) => { const v = state["m" + i]; if (v !== undefined) { done++; if (v === m.a) got++; } });
+  CARDS.forEach((c, i) => { const v = state["c" + i]; if (v) { done++; if (v === "got") got++; } });
+  scoreEl.textContent = got + " correct · " + done + " / " + (MC.length + CARDS.length) + " answered";
+}
+
+function render() {
+  quiz.innerHTML = "";
+  let n = 0;
+  MC.forEach((m, i) => {
+    n++;
+    const el = document.createElement("div");
+    el.className = "q";
+    el.innerHTML = `<p class="qt"><span class="qn">${n}.</span></p><div class="opts"></div><p class="why" hidden></p>`;
+    el.querySelector(".qt").append(m.q);
+    const opts = el.querySelector(".opts"), why = el.querySelector(".why");
+    m.o.forEach((txt, j) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = txt;
+      b.addEventListener("click", () => { state["m" + i] = j; save(); paint(); });
+      opts.append(b);
+    });
+    function paint() {
+      const pick = state["m" + i];
+      [...opts.children].forEach((b, j) => {
+        b.className = "";
+        if (pick !== undefined) {
+          b.disabled = true;
+          if (j === m.a) b.className = "correct";
+          else if (j === pick) b.className = "wrong";
+        } else b.disabled = false;
+      });
+      why.hidden = pick === undefined;
+      why.textContent = (pick === m.a ? "Correct. " : "Not quite. ") + m.why;
+      updateScore();
+    }
+    paint();
+    quiz.append(el);
+  });
+  CARDS.forEach((c, i) => {
+    n++;
+    const el = document.createElement("div");
+    el.className = "q";
+    el.innerHTML = `<p class="qt"><span class="qn">${n}.</span></p>
+      <div><button type="button" class="reveal">Reveal answer</button></div>
+      <div class="card-ans" hidden></div>
+      <div class="selfmark" hidden><button type="button" class="got" aria-pressed="false">I got it</button><button type="button" class="miss" aria-pressed="false">I missed it</button></div>`;
+    el.querySelector(".qt").append(c.q);
+    const ans = el.querySelector(".card-ans"), mark = el.querySelector(".selfmark"), rev = el.querySelector(".reveal");
+    ans.textContent = c.a;
+    const show = () => { ans.hidden = false; mark.hidden = false; rev.hidden = true; };
+    rev.addEventListener("click", show);
+    const [g, x] = mark.children;
+    const paint = () => { g.setAttribute("aria-pressed", state["c" + i] === "got"); x.setAttribute("aria-pressed", state["c" + i] === "miss"); updateScore(); };
+    g.addEventListener("click", () => { state["c" + i] = "got"; save(); paint(); });
+    x.addEventListener("click", () => { state["c" + i] = "miss"; save(); paint(); });
+    if (state["c" + i]) show();
+    paint();
+    quiz.append(el);
+  });
+  updateScore();
+}
+
+document.getElementById("reset").addEventListener("click", () => { state = {}; save(); render(); });
+load();
+render();
+</script>
+</body>
+</html>
