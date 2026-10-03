@@ -266,11 +266,15 @@ async function notifyBot(row) {
   return false;
 }
 
-// Lets you confirm after a deploy which storage backend is live.
-app.get("/api/health", wrap(async (req, res) => {
-  const stats = await db.getStats();
-  res.json({ ok: true, storage: db.storageBackend, pending: stats.pending, uptime_s: Math.round(process.uptime()) });
-}));
+// Health check for Render (either path works as the Health Check Path) and
+// a quick way to confirm which storage backend is live after a deploy.
+// Deliberately doesn't touch Redis: Render polls this frequently and every
+// call would count against Upstash's request quota.
+function health(req, res) {
+  res.json({ ok: true, storage: db.storageBackend, uptime_s: Math.round(process.uptime()) });
+}
+app.get("/health", health);
+app.get("/api/health", health);
 
 app.get("/api/my-submissions", requireAuth, wrap(async (req, res) => {
   const rows = (await db.getSubmissionsByDiscordId(req.session.user.id)).map((r) => ({
