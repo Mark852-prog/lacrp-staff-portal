@@ -283,6 +283,7 @@ app.get("/api/my-submissions", requireAuth, wrap(async (req, res) => {
     verdict: r.verdict,
     active: r.active,
     attempt_number: r.attempt_number,
+    notes: r.status === db.STATUS.REVIEWED ? r.notes : null,
     submitted_at: r.submitted_at,
     reviewed_at: r.reviewed_at,
   }));
@@ -291,8 +292,23 @@ app.get("/api/my-submissions", requireAuth, wrap(async (req, res) => {
 
 // ---------------- Admin-only ----------------
 
+function givenValue(row, q) {
+  const a = row.answers && row.answers[q.id];
+  return a ? a.value : null;
+}
+
+// Multiple-choice is marked automatically so reviewers can focus on the
+// written answers. Compared by answer text, which is what the trainee saw.
+function isMcCorrect(row, q) {
+  return givenValue(row, q) === q.options[q.correct];
+}
+
+function mcScore(row) {
+  const mc = questions.filter((q) => q.type === "mc");
+  return { correct: mc.filter((q) => isMcCorrect(row, q)).length, total: mc.length };
+}
+
 function mergeAnswers(row) {
-  const givenAnswers = row.answers;
   return questions.map((q) => ({
     id: q.id,
     section: q.section,
@@ -302,7 +318,8 @@ function mergeAnswers(row) {
     correctAnswer: q.type === "mc" ? q.options[q.correct] : null,
     modelSummary: q.modelSummary || null,
     note: q.note || null,
-    givenAnswer: givenAnswers[q.id] ? givenAnswers[q.id].value : null,
+    givenAnswer: givenValue(row, q),
+    isCorrect: q.type === "mc" ? isMcCorrect(row, q) : null,
   }));
 }
 
@@ -315,6 +332,8 @@ app.get("/api/admin/submissions", requireAdmin, wrap(async (req, res) => {
     rank: r.rank,
     status: r.status,
     verdict: r.verdict,
+    attempt_number: r.attempt_number,
+    mc_score: mcScore(r),
     submitted_at: r.submitted_at,
     reviewed_at: r.reviewed_at,
   }));
@@ -324,7 +343,7 @@ app.get("/api/admin/submissions", requireAdmin, wrap(async (req, res) => {
 app.get("/api/admin/submissions/:id", requireAdmin, wrap(async (req, res) => {
   const row = await db.getSubmissionById(req.params.id);
   if (!row) return res.status(404).json({ error: "Not found" });
-  res.json({ ...row, answers: mergeAnswers(row) });
+  res.json({ ...row, answers: mergeAnswers(row), mc_score: mcScore(row) });
 }));
 
 // A review without a verdict used to move the attempt out of Pending with
@@ -364,6 +383,7 @@ app.get("/api/senior/submissions", requireSenior, wrap(async (req, res) => {
     active: r.active,
     attempt_number: r.attempt_number,
     reviewer_name: r.reviewer_name,
+    mc_score: mcScore(r),
     submitted_at: r.submitted_at,
     reviewed_at: r.reviewed_at,
   }));
@@ -373,7 +393,7 @@ app.get("/api/senior/submissions", requireSenior, wrap(async (req, res) => {
 app.get("/api/senior/submissions/:id", requireSenior, wrap(async (req, res) => {
   const row = await db.getSubmissionById(req.params.id);
   if (!row) return res.status(404).json({ error: "Not found" });
-  res.json({ ...row, answers: mergeAnswers(row) });
+  res.json({ ...row, answers: mergeAnswers(row), mc_score: mcScore(row) });
 }));
 
 // A candidate's complete attempt history, oldest to newest, plus which
@@ -392,6 +412,7 @@ app.get("/api/senior/candidates/:discordId", requireSenior, wrap(async (req, res
       verdict: r.verdict,
       active: r.active,
       reviewer_name: r.reviewer_name,
+      mc_score: mcScore(r),
       override_history: r.override_history,
       submitted_at: r.submitted_at,
       reviewed_at: r.reviewed_at,
