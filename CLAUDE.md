@@ -82,6 +82,11 @@ Discord from tests.
   `claude/lacrp-quiz-bot-reliability-0oq2vm` of `lacrp-staff-portal`, waiting
   for the owner's OK to merge.
 
+## Already exists elsewhere (don't re-suggest)
+The server already has (outside these two repos): staff applications, shift
+tracking, LOA requests, session (SSU) announcements, multiple trainings, and
+punishment logging.
+
 ## Waiting on / next up
 - Staff uniforms (being made).
 - The developer is finishing the "utilities".
